@@ -11,9 +11,13 @@ import {
 } from '../dataSource/historicalUsage';
 import dashboardHtml from './dashboard.html';
 
-interface WebviewCommand {
-  readonly type?: unknown;
-}
+type WebviewCommand =
+  | {
+      readonly type: 'copyCompact';
+    }
+  | {
+      readonly type: 'startNewChat';
+    };
 
 interface WebviewModelUsage {
   readonly model: string;
@@ -49,7 +53,7 @@ export class BreakdownPanel implements vscode.Disposable {
   public open(source: ContextDataSource): void {
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.One);
-      this.postSnapshot(source);
+      void this.postSnapshot(source);
       return;
     }
 
@@ -72,7 +76,11 @@ export class BreakdownPanel implements vscode.Disposable {
         this.disposePanelSubscriptions();
         this.panel = undefined;
       }),
-      panel.webview.onDidReceiveMessage((message: WebviewCommand) => {
+      panel.webview.onDidReceiveMessage((message: unknown) => {
+        if (!isWebviewCommand(message)) {
+          return;
+        }
+
         void this.handleMessage(panel, message);
       }),
       source.onDidChange(() => {
@@ -80,7 +88,7 @@ export class BreakdownPanel implements vscode.Disposable {
       })
     );
 
-    this.postSnapshot(source);
+    void this.postSnapshot(source);
   }
 
   private disposePanelSubscriptions(): void {
@@ -138,42 +146,58 @@ export class BreakdownPanel implements vscode.Disposable {
   }
 
   private async handleMessage(panel: vscode.WebviewPanel, message: WebviewCommand): Promise<void> {
-    if (message.type === 'copyCompact') {
-      await vscode.env.clipboard.writeText('/compact');
-      await panel.webview.postMessage({
-        type: 'commandResult',
-        payload: {
-          message: 'Copied /compact'
-        }
-      });
-      return;
-    }
-
-    if (message.type === 'startNewChat') {
-      const opened = await vscode.env.openExternal(
-        vscode.Uri.parse('vscode://anthropic.claude-code/new-session')
-      );
-
-      if (!opened) {
-        void vscode.window.showInformationMessage(
-          'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.'
+    switch (message.type) {
+      case 'copyCompact':
+        await vscode.env.clipboard.writeText('/compact');
+        await panel.webview.postMessage({
+          type: 'commandResult',
+          payload: {
+            message: 'Copied /compact'
+          }
+        });
+        return;
+      case 'startNewChat': {
+        const opened = await vscode.env.openExternal(
+          vscode.Uri.parse('vscode://anthropic.claude-code/new-session')
         );
-      }
 
-      await panel.webview.postMessage({
-        type: opened ? 'commandResult' : 'newChatUnavailable',
-        payload: {
-          message: opened
-            ? 'Opening new Claude Code chat'
-            : 'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.'
+        if (!opened) {
+          void vscode.window.showInformationMessage(
+            'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.'
+          );
         }
-      });
+
+        await panel.webview.postMessage({
+          type: opened ? 'commandResult' : 'newChatUnavailable',
+          payload: {
+            message: opened
+              ? 'Opening new Claude Code chat'
+              : 'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.'
+          }
+        });
+        return;
+      }
+      default: {
+        const exhaustiveCheck: never = message;
+        return exhaustiveCheck;
+      }
     }
   }
 }
 
 function getNonce(): string {
   return crypto.randomBytes(16).toString('base64');
+}
+
+function isWebviewCommand(value: unknown): value is WebviewCommand {
+  return (
+    isRecord(value) &&
+    (value.type === 'copyCompact' || value.type === 'startNewChat')
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function toWebviewHistoricalUsage(

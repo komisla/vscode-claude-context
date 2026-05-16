@@ -378,8 +378,7 @@ function extractAtImports(content: string): readonly string[] {
       (importPath.startsWith('./') ||
         importPath.startsWith('../') ||
         importPath.startsWith('~/') ||
-        importPath.startsWith('/') ||
-        importPath.endsWith('.md'))
+        importPath.startsWith('/'))
     ) {
       imports.push(importPath);
     }
