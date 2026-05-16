@@ -32,11 +32,11 @@
           return;
         }
 
-        const source = event.data.payload.source;
+        const breakdown = event.data.payload;
         status.textContent =
-          source.fillPercent === undefined
+          breakdown.totalTokens === 0 && breakdown.fillPercent === 0
             ? 'Claude Code session not found.'
-            : `Context fill: ${Math.round(source.fillPercent)}%`;
+            : `Context fill: ${Math.round(breakdown.fillPercent)}%`;
       });
     </script>
   </body>
