@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import type { ContextDataSource } from '../dataSource';
 import { reconstructContextBreakdown } from '../contextReconstructor';
@@ -47,7 +48,7 @@ export class BreakdownPanel implements vscode.Disposable {
     );
 
     this.panel = panel;
-    panel.webview.html = dashboardHtml;
+    panel.webview.html = dashboardHtml.replaceAll('{{nonce}}', getNonce());
 
     this.panelSubscriptions.push(
       panel.onDidDispose(() => {
@@ -152,4 +153,8 @@ export class BreakdownPanel implements vscode.Disposable {
       });
     }
   }
+}
+
+function getNonce(): string {
+  return crypto.randomBytes(16).toString('base64');
 }
