@@ -286,6 +286,7 @@ export class JsonlTailDataSource implements ContextDataSource {
         this.emitUpdate({ error: SESSION_NOT_FOUND_ERROR });
       })
       .finally(() => {
+        this.lastTickAt = Date.now();
         this.refreshing = undefined;
       });
 
@@ -309,7 +310,6 @@ export class JsonlTailDataSource implements ContextDataSource {
 
     this.watchProjectDir(activeSession.projectDir);
     await this.readNewBytes(activeSession.jsonlPath);
-    this.lastTickAt = Date.now();
   }
 
   private async findActiveSession(): Promise<ActiveSession | undefined> {
@@ -460,7 +460,7 @@ export class JsonlTailDataSource implements ContextDataSource {
 
   private consumeChunk(filePath: string, chunk: string): void {
     const combined = `${this.remainders.get(filePath) ?? ''}${chunk}`;
-    const complete = combined.endsWith('\n') || combined.endsWith('\r');
+    const complete = combined.endsWith('\n');
     const lines = combined.split(/\r?\n/);
     const completeLines = complete ? lines : lines.slice(0, -1);
     const remainder = complete ? '' : lines.at(-1) ?? '';
