@@ -8,6 +8,7 @@ import {
   type HistoricalUsageBudgets,
   type HistoricalUsageSnapshot
 } from './dataSource/historicalUsage';
+import { buildTooltipText } from './statusBarFormatting';
 
 const HISTORY_REFRESH_MS = 5 * 60 * 1_000;
 
@@ -161,31 +162,20 @@ export class StatusBarController implements vscode.Disposable {
     const tooltip = new vscode.MarkdownString(undefined, true);
     tooltip.isTrusted = false;
     tooltip.appendText(
-      `Context: ${fillPercent}% (${formatCompactTokens(totalTokens)} / ${formatCompactTokens(
-        effectiveWindow
-      )} tokens)\n`
+      buildTooltipText({
+        fillPercent,
+        totalTokens,
+        effectiveWindow,
+        history:
+          history === undefined
+            ? undefined
+            : {
+                pct5h: history.pct5h,
+                pct7d: history.pct7d,
+                byModel: getModelUsageRows(history)
+              }
+      })
     );
-
-    if (history !== undefined) {
-      tooltip.appendText(`Last 5h: ${Math.round(history.pct5h)}% of budget\n`);
-      tooltip.appendText(`Last 7d: ${Math.round(history.pct7d)}% of budget\n`);
-
-      const modelRows = getModelUsageRows(history);
-
-      if (modelRows.length > 0) {
-        tooltip.appendText('Last 7d by model:\n');
-
-        for (const row of modelRows) {
-          tooltip.appendText(`  ${row.model}  ${formatCompactTokens(row.tokens7d)} tokens\n`);
-        }
-      }
-    }
-
-    if (fillPercent >= 60) {
-      tooltip.appendText('Context high - run `/compact` or start a new chat\n');
-    }
-
-    tooltip.appendText('Click for breakdown and details');
     return tooltip;
   }
 }
@@ -200,20 +190,4 @@ function getModelUsageRows(
     }))
     .filter((row) => row.tokens7d > 0)
     .sort((a, b) => b.tokens7d - a.tokens7d || a.model.localeCompare(b.model));
-}
-
-function formatCompactTokens(tokens: number): string {
-  if (!Number.isFinite(tokens)) {
-    return '0';
-  }
-
-  if (tokens >= 1_000_000) {
-    return `${Math.round(tokens / 100_000) / 10}m`;
-  }
-
-  if (tokens >= 1_000) {
-    return `${Math.round(tokens / 1_000)}k`;
-  }
-
-  return `${Math.round(tokens)}`;
 }

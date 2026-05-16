@@ -211,12 +211,16 @@ export function parseHistoricalUsageLine(lineText: string): TokenEntry | undefin
   return {
     timestampMs,
     tokens: getUsageTotal(line.message.usage),
-    model: normalizeModel(line.message.model)
+    model: normalizeModel(line.message.model, Object.hasOwn(line.message, 'model'))
   };
 }
 
-function normalizeModel(model: unknown): string {
-  return typeof model === 'string' && model.trim() !== '' ? model : 'unknown';
+function normalizeModel(model: unknown, hasModelField: boolean): string {
+  if (typeof model === 'string' && model.trim() !== '') {
+    return model;
+  }
+
+  return hasModelField ? 'unknown/invalid' : 'unknown/absent';
 }
 
 function getModelUsage(
