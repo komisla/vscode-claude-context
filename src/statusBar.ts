@@ -1,13 +1,27 @@
 import * as vscode from 'vscode';
+import { clearInterval, setInterval } from 'timers';
 import type { ContextDataSource, ContextUpdate } from './dataSource';
+import {
+  DEFAULT_BUDGET_5H,
+  DEFAULT_BUDGET_7D,
+  HistoricalUsageReader,
+  type HistoricalUsageBudgets,
+  type HistoricalUsageSnapshot
+} from './dataSource/historicalUsage';
+
+const HISTORY_REFRESH_MS = 5 * 60 * 1_000;
 
 export class StatusBarController implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
   private readonly subscriptions: vscode.Disposable[] = [];
+  private readonly historicalUsage = new HistoricalUsageReader();
+  private historyRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  private historyRefreshing: Promise<void> | undefined;
   private latest: ContextUpdate | undefined;
+  private latestHistory: HistoricalUsageSnapshot | undefined;
 
   public constructor(source: ContextDataSource) {
-    this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.item.command = 'claudeContext.openPanel';
     this.item.name = 'Claude Context Monitor';
 
@@ -18,47 +32,142 @@ export class StatusBarController implements vscode.Disposable {
         this.render();
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration('claudeContext.hideBelow')) {
+        if (event.affectsConfiguration('claudeContext')) {
           this.render();
+
+          if (
+            event.affectsConfiguration('claudeContext.showHistoricalUsage') ||
+            event.affectsConfiguration('claudeContext.budget5h') ||
+            event.affectsConfiguration('claudeContext.budget7d')
+          ) {
+            this.scheduleHistoryRefresh();
+          }
         }
       })
     );
 
+    this.scheduleHistoryRefresh();
+    this.historyRefreshTimer = setInterval(() => this.scheduleHistoryRefresh(), HISTORY_REFRESH_MS);
     this.render();
   }
 
   public dispose(): void {
+    if (this.historyRefreshTimer !== undefined) {
+      clearInterval(this.historyRefreshTimer);
+    }
+
     for (const subscription of this.subscriptions) {
       subscription.dispose();
     }
   }
 
   private render(): void {
-    const hideBelow = vscode.workspace
-      .getConfiguration('claudeContext')
-      .get<number>('hideBelow', 40);
+    const config = vscode.workspace.getConfiguration('claudeContext');
+    const hideBelow = config.get<number>('hideBelow', 40);
+    const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', true);
 
-    if (this.latest?.fillPercent !== undefined) {
-      const fillPercent = Math.round(this.latest.fillPercent);
-
-      if (fillPercent < hideBelow) {
-        this.item.hide();
-        return;
-      }
-
-      this.item.text = `ctx ${fillPercent}%`;
-      this.item.tooltip = this.latest.sessionPath
-        ? `Claude context fill: ${fillPercent}%\n${this.latest.sessionPath}`
-        : `Claude context fill: ${fillPercent}%`;
-      this.item.backgroundColor =
-        fillPercent >= 60 ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
-      this.item.show();
+    if (this.latest?.fillPercent === undefined) {
+      this.item.hide();
       return;
     }
 
-    this.item.text = 'ctx —';
-    this.item.tooltip = this.latest?.error ?? 'Claude Code session not found';
-    this.item.backgroundColor = undefined;
+    const fillPercent = Math.round(this.latest.fillPercent);
+
+    if (fillPercent < hideBelow) {
+      this.item.hide();
+      return;
+    }
+
+    const history =
+      showHistoricalUsage && this.latestHistory?.hasData === true ? this.latestHistory : undefined;
+    const parts = [`ctx ${fillPercent}%`];
+
+    if (history !== undefined) {
+      parts.push(`5h ${Math.round(history.pct5h)}%`, `7d ${Math.round(history.pct7d)}%`);
+    }
+
+    this.item.text = parts.join('  ');
+    this.item.tooltip = this.buildTooltip(fillPercent, history);
+    this.item.backgroundColor =
+      fillPercent >= 60
+        ? new vscode.ThemeColor('statusBarItem.errorBackground')
+        : fillPercent >= 40
+          ? new vscode.ThemeColor('statusBarItem.warningBackground')
+          : undefined;
     this.item.show();
   }
+
+  private scheduleHistoryRefresh(): void {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
+      this.latestHistory = undefined;
+      return;
+    }
+
+    if (this.historyRefreshing !== undefined) {
+      return;
+    }
+
+    this.historyRefreshing = this.historicalUsage
+      .refresh(this.getHistoricalUsageBudgets())
+      .then((snapshot) => {
+        this.latestHistory = snapshot;
+        this.render();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.historyRefreshing = undefined;
+      });
+  }
+
+  private getHistoricalUsageBudgets(): HistoricalUsageBudgets {
+    const config = vscode.workspace.getConfiguration('claudeContext');
+
+    return {
+      budget5h: config.get<number>('budget5h', DEFAULT_BUDGET_5H),
+      budget7d: config.get<number>('budget7d', DEFAULT_BUDGET_7D)
+    };
+  }
+
+  private buildTooltip(
+    fillPercent: number,
+    history: HistoricalUsageSnapshot | undefined
+  ): vscode.MarkdownString {
+    const totalTokens = this.latest?.totalTokens ?? 0;
+    const effectiveWindow = this.latest?.effectiveWindow ?? this.latest?.contextWindow ?? 0;
+    const tooltip = new vscode.MarkdownString(undefined, true);
+    tooltip.isTrusted = false;
+    tooltip.appendText(
+      `Context: ${fillPercent}% (${formatCompactTokens(totalTokens)} / ${formatCompactTokens(
+        effectiveWindow
+      )} tokens)\n`
+    );
+
+    if (history !== undefined) {
+      tooltip.appendText(`Last 5h: ${Math.round(history.pct5h)}% of budget\n`);
+      tooltip.appendText(`Last 7d: ${Math.round(history.pct7d)}% of budget\n`);
+    }
+
+    if (fillPercent >= 60) {
+      tooltip.appendText('Context high - run `/compact` or start a new chat\n');
+    }
+
+    tooltip.appendText('Click for breakdown and details');
+    return tooltip;
+  }
+}
+
+function formatCompactTokens(tokens: number): string {
+  if (!Number.isFinite(tokens)) {
+    return '0';
+  }
+
+  if (tokens >= 1_000_000) {
+    return `${Math.round(tokens / 100_000) / 10}m`;
+  }
+
+  if (tokens >= 1_000) {
+    return `${Math.round(tokens / 1_000)}k`;
+  }
+
+  return `${Math.round(tokens)}`;
 }

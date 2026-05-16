@@ -71,7 +71,11 @@ export function getModelLimits(model: string | undefined): ModelLimits {
 export function calculateFillPercent(
   totalTokens: number,
   model: string | undefined
-): { readonly fillPercent: number; readonly contextWindow: number } {
+): {
+  readonly fillPercent: number;
+  readonly contextWindow: number;
+  readonly effectiveWindow: number;
+} {
   const { contextWindow, maxOutputTokens } = getModelLimits(model);
   const effectiveWindow = Math.max(
     contextWindow - maxOutputTokens - CLAUDE_INTERNAL_RESERVE_TOKENS,
@@ -80,7 +84,8 @@ export function calculateFillPercent(
 
   return {
     fillPercent: Math.min((totalTokens / effectiveWindow) * 100, 100),
-    contextWindow
+    contextWindow,
+    effectiveWindow
   };
 }
 
@@ -103,12 +108,13 @@ export function parseContextUpdateFromLine(
   const usage = line.message.usage;
   const totalTokens = getUsageTotal(usage);
   const model = typeof line.message.model === 'string' ? line.message.model : 'unknown';
-  const { fillPercent, contextWindow } = calculateFillPercent(totalTokens, model);
+  const { fillPercent, contextWindow, effectiveWindow } = calculateFillPercent(totalTokens, model);
 
   return {
     fillPercent,
     totalTokens,
     contextWindow,
+    effectiveWindow,
     model,
     sessionPath
   };
