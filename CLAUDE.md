@@ -2,9 +2,10 @@
 
 VSCode extension that shows the **current Claude Code context window composition** in the editor:
 traffic-light status bar item + breakdown panel (tokens by category: system prompt, tools, memory, conversation).
+Includes a usage trend (5h/7d token budget %) as supporting context for the live fill indicator.
 
-Differentiation from `long-kudo/vscode-claude-status`: that extension tracks historical costs from JSONL logs.
-This extension shows the **live context state** — what is consuming tokens right now.
+Differentiation from `long-kudo/vscode-claude-status`: that extension tracks historical **costs** (dollar amounts) from JSONL logs.
+This extension shows the **live context state** — what is consuming tokens right now — plus token-budget trend as a % (not dollars, not a log view).
 
 **CLAUDE.md size rule:** Keep ≤ ~120 lines. Sections > ~15 lines → extract to `docs/` + link here.
 
@@ -67,7 +68,7 @@ Press **F5** in VSCode to launch Extension Development Host.
 3. **No `localStorage`/`sessionStorage`** in WebView — use VS Code message passing.
 4. **No polling faster than 5 s** when Claude Code is active; pause when idle.
 5. **No direct push to `main`.** Always feature branch + PR.
-6. **No scope creep.** Context window display only — not cost tracking, not history.
+6. **No scope creep.** Context window display + token-budget trend (%) only — no dollar cost tracking, no raw history log, no model comparison UI.
 
 ---
 
