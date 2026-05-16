@@ -145,8 +145,11 @@ export class JsonlTailDataSource implements ContextDataSource {
   };
 
   private claudeRootWatcher: fs.FSWatcher | undefined;
+  private claudeRootWatcherSetup: Promise<void> | undefined;
   private ideWatcher: fs.FSWatcher | undefined;
+  private ideWatcherSetup: Promise<void> | undefined;
   private projectWatcher: fs.FSWatcher | undefined;
+  private watchFactory: typeof fs.watch = fs.watch;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private tickTimer: ReturnType<typeof setTimeout> | undefined;
   private lastTickAt = 0;
@@ -160,8 +163,9 @@ export class JsonlTailDataSource implements ContextDataSource {
 
   public readonly onDidChange: vscode.Event<ContextUpdate>;
 
-  public constructor(vscodeApi: typeof vscode) {
+  public constructor(vscodeApi: typeof vscode, watchFactory: typeof fs.watch = fs.watch) {
     this.vscodeApi = vscodeApi;
+    this.watchFactory = watchFactory;
     this.emitter = new this.vscodeApi.EventEmitter<ContextUpdate>();
     this.onDidChange = this.emitter.event;
 
@@ -204,9 +208,13 @@ export class JsonlTailDataSource implements ContextDataSource {
   }
 
   private watchClaudeRoot(): void {
+    if (this.disposed || this.claudeRootWatcher !== undefined || this.claudeRootWatcherSetup !== undefined) {
+      return;
+    }
+
     const claudeRoot = this.getClaudeRoot();
 
-    this.createWatcher(claudeRoot, () => {
+    this.claudeRootWatcherSetup = this.createWatcher(claudeRoot, () => {
       this.watchIdeRoot();
       this.scheduleRefresh(250);
     }).then((watcher) => {
@@ -216,22 +224,28 @@ export class JsonlTailDataSource implements ContextDataSource {
       }
 
       this.claudeRootWatcher = watcher;
-    }, () => undefined);
+    }, () => undefined).finally(() => {
+      this.claudeRootWatcherSetup = undefined;
+    });
   }
 
   private watchIdeRoot(): void {
-    if (this.disposed || this.ideWatcher !== undefined) {
+    if (this.disposed || this.ideWatcher !== undefined || this.ideWatcherSetup !== undefined) {
       return;
     }
 
-    this.createWatcher(this.getClaudeIdeRoot(), () => this.scheduleRefresh(250)).then((watcher) => {
-      if (this.disposed) {
-        watcher.close();
-        return;
-      }
+    this.ideWatcherSetup = this.createWatcher(this.getClaudeIdeRoot(), () => this.scheduleRefresh(250))
+      .then((watcher) => {
+        if (this.disposed) {
+          watcher.close();
+          return;
+        }
 
-      this.ideWatcher = watcher;
-    }, () => undefined);
+        this.ideWatcher = watcher;
+      }, () => undefined)
+      .finally(() => {
+        this.ideWatcherSetup = undefined;
+      });
   }
 
   private watchProjectDir(projectDir: string): void {
@@ -268,7 +282,32 @@ export class JsonlTailDataSource implements ContextDataSource {
     listener: (event: string, filename: string | Buffer | null) => void
   ): Promise<fs.FSWatcher> {
     await fsp.access(dir);
-    return fs.watch(dir, listener);
+    const watcher = this.watchFactory(dir, listener);
+
+    watcher.on('error', (err: Error) => {
+      if (this.disposed) {
+        return;
+      }
+
+      globalThis.console.warn('[vscode-claude-context] FSWatcher error:', err.message);
+      watcher.close();
+
+      if (this.claudeRootWatcher === watcher) {
+        this.claudeRootWatcher = undefined;
+      }
+
+      if (this.ideWatcher === watcher) {
+        this.ideWatcher = undefined;
+      }
+
+      if (this.projectWatcher === watcher) {
+        this.projectWatcher = undefined;
+      }
+
+      this.scheduleRefresh(30_000);
+    });
+
+    return watcher;
   }
 
   private scheduleRefresh(delayMs: number): void {
@@ -321,6 +360,9 @@ export class JsonlTailDataSource implements ContextDataSource {
     if (this.disposed) {
       return;
     }
+
+    this.watchClaudeRoot();
+    this.watchIdeRoot();
 
     const activeSession = await this.findActiveSession();
 
