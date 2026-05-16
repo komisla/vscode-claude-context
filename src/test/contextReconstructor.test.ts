@@ -29,13 +29,13 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
     await mkdir(globalClaudeDir, { recursive: true });
     await mkdir(workspaceRoot, { recursive: true });
 
-    const globalClaude = 'global rules @./global-import.md';
+    const globalClaude = 'global rules @global-import.md';
     const globalImport = 'global imported';
-    const parentClaude = 'parent rules @./parent-import.md\nRepo @long-kudo/vscode-claude-status';
+    const parentClaude = 'parent rules @parent-import.md\nRepo @long-kudo/vscode-claude-status';
     const parentImport = 'parent imported';
-    const workspaceClaude = `workspace rules @./workspace-import.md @missing.md @my-package.md\nEmail slavik@korbinian.eu\nPackage @types/node`;
+    const workspaceClaude = `workspace rules @./workspace-import.md for details @missing.md @my-package.md\nEmail slavik@korbinian.eu\nPackage @types/node`;
     const workspaceImport = 'workspace imported';
-    const bareImport = 'bare import should not be counted';
+    const bareImport = 'bare import should be counted';
     const emailMatch = 'email-like import should not be counted';
     const repoReference = 'repo reference should not be imported';
     const npmPackage = 'package should not be imported';
@@ -59,7 +59,8 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
       parentClaude,
       parentImport,
       workspaceClaude,
-      workspaceImport
+      workspaceImport,
+      bareImport
     ].reduce((sum, content) => sum + countTokens(content), 0);
 
     assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), expected);
