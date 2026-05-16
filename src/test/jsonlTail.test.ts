@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp } from 'fs';
@@ -249,6 +250,98 @@ test('watchProjectDir keeps the latest watcher when an older setup resolves late
     process.env.HOMEDRIVE = originalEnv.HOMEDRIVE;
     process.env.HOMEPATH = originalEnv.HOMEPATH;
     process.env.USERPROFILE = originalEnv.USERPROFILE;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource clears watcher references and retries after fs.watch errors', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-watcher-error-'));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const ideRoot = path.join(claudeRoot, 'ide');
+
+  await mkdir(ideRoot, { recursive: true });
+
+  const scheduledRefreshes: number[] = [];
+  const watchCalls: string[] = [];
+
+  class FakeWatcher {
+    public closed = 0;
+    private errorListener: ((err: Error) => void) | undefined;
+
+    public constructor(public readonly dir: string) {}
+
+    public on(event: string, listener: (err: Error) => void): this {
+      if (event === 'error') {
+        this.errorListener = listener;
+      }
+
+      return this;
+    }
+
+    public close(): void {
+      this.closed += 1;
+    }
+
+    public emitError(message: string): void {
+      this.errorListener?.(new Error(message));
+    }
+  }
+
+  const originalEnv = snapshotProcessEnv();
+  applyClaudeHome(homeDir);
+  const fakeWatch = ((dir: string, listener: (event: string, filename: string | Buffer | null) => void) => {
+    void listener;
+    watchCalls.push(dir);
+    return new FakeWatcher(dir) as unknown as fs.FSWatcher;
+  }) as typeof fs.watch;
+
+  let dataSource: JsonlTailDataSource | undefined;
+
+  try {
+    dataSource = new JsonlTailDataSource(createMockVscode([]), fakeWatch);
+    const mutable = dataSource as unknown as {
+      claudeRootWatcher: FakeWatcher | undefined;
+      ideWatcher: FakeWatcher | undefined;
+      projectWatcher: FakeWatcher | undefined;
+      scheduleRefresh: (delayMs: number) => void;
+      refreshActiveSessionCore: () => Promise<void>;
+    };
+
+    await delay(25);
+
+    const rootWatcher = mutable.claudeRootWatcher;
+    const ideWatcher = mutable.ideWatcher;
+
+    assert.ok(rootWatcher !== undefined);
+    assert.ok(ideWatcher !== undefined);
+
+    mutable.scheduleRefresh = (delayMs: number) => {
+      scheduledRefreshes.push(delayMs);
+    };
+
+    mutable.claudeRootWatcher = rootWatcher;
+    mutable.ideWatcher = rootWatcher;
+    mutable.projectWatcher = rootWatcher;
+
+    rootWatcher.emitError('directory removed');
+
+    assert.equal(rootWatcher.closed, 1);
+    assert.equal(mutable.claudeRootWatcher, undefined);
+    assert.equal(mutable.ideWatcher, undefined);
+    assert.equal(mutable.projectWatcher, undefined);
+    assert.deepEqual(scheduledRefreshes, [30_000]);
+
+    const watchCountAfterError = watchCalls.length;
+    await mutable.refreshActiveSessionCore();
+    await delay(25);
+
+    assert.ok(watchCalls.length >= watchCountAfterError + 2);
+    assert.ok(mutable.claudeRootWatcher !== undefined);
+    assert.ok(mutable.ideWatcher !== undefined);
+  } finally {
+    dataSource?.dispose();
+    restoreProcessEnv(originalEnv);
     await rm(root, { recursive: true, force: true });
   }
 });
