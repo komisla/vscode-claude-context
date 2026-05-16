@@ -24,7 +24,8 @@ test('historical parser sums assistant usage with timestamp', () => {
 
   assert.deepEqual(parseHistoricalUsageLine(JSON.stringify(line)), {
     timestampMs: Date.parse(line.timestamp),
-    tokens: 100
+    tokens: 100,
+    model: 'unknown'
   });
 });
 
@@ -79,6 +80,42 @@ test('historical reader scans jsonl recursively and buckets 5h and 7d windows', 
   }
 });
 
+test('historical reader groups usage by model', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-models-'));
+
+  try {
+    const projectDir = path.join(root, 'project');
+    await mkdir(projectDir);
+    await writeFile(
+      path.join(projectDir, 'session.jsonl'),
+      [
+        JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100, 'claude-sonnet-4-6')),
+        JSON.stringify(makeAssistantLine('2026-05-16T10:00:00Z', 200, 'claude-opus-4-7')),
+        JSON.stringify(makeAssistantLine('2026-05-15T11:00:00Z', 300, 'claude-sonnet-4-6')),
+        JSON.stringify(makeAssistantLine('2026-05-15T10:00:00Z', 400))
+      ].join('\n')
+    );
+
+    const reader = new HistoricalUsageReader(root);
+    const snapshot = await reader.refresh({ budget5h: 1_000, budget7d: 2_000 }, NOW);
+
+    assert.deepEqual(snapshot.byModel.get('claude-sonnet-4-6'), {
+      tokens5h: 100,
+      tokens7d: 400
+    });
+    assert.deepEqual(snapshot.byModel.get('claude-opus-4-7'), {
+      tokens5h: 200,
+      tokens7d: 200
+    });
+    assert.deepEqual(snapshot.byModel.get('unknown'), {
+      tokens5h: 0,
+      tokens7d: 400
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('historical reader refreshes changed files', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-history-cache-'));
 
@@ -101,12 +138,13 @@ test('historical reader refreshes changed files', async () => {
   }
 });
 
-function makeAssistantLine(timestamp: string, inputTokens: number): unknown {
+function makeAssistantLine(timestamp: string, inputTokens: number, model?: string): unknown {
   return {
     timestamp,
     type: 'message',
     message: {
       role: 'assistant',
+      model,
       usage: {
         input_tokens: inputTokens,
         cache_read_input_tokens: 0,

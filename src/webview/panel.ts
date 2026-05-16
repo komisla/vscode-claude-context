@@ -15,6 +15,21 @@ interface WebviewCommand {
   readonly type?: unknown;
 }
 
+interface WebviewModelUsage {
+  readonly model: string;
+  readonly tokens5h: number;
+  readonly tokens7d: number;
+}
+
+interface WebviewHistoricalUsageSnapshot {
+  readonly tokens5h: number;
+  readonly tokens7d: number;
+  readonly pct5h: number;
+  readonly pct7d: number;
+  readonly hasData: boolean;
+  readonly byModel: readonly WebviewModelUsage[];
+}
+
 export class BreakdownPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private readonly historicalUsage = new HistoricalUsageReader();
@@ -94,7 +109,7 @@ export class BreakdownPanel implements vscode.Disposable {
       type: 'contextSnapshot',
       payload: {
         breakdown,
-        history
+        history: history === undefined ? undefined : toWebviewHistoricalUsage(history)
       }
     });
   }
@@ -157,4 +172,24 @@ export class BreakdownPanel implements vscode.Disposable {
 
 function getNonce(): string {
   return crypto.randomBytes(16).toString('base64');
+}
+
+function toWebviewHistoricalUsage(
+  snapshot: HistoricalUsageSnapshot
+): WebviewHistoricalUsageSnapshot {
+  return {
+    tokens5h: snapshot.tokens5h,
+    tokens7d: snapshot.tokens7d,
+    pct5h: snapshot.pct5h,
+    pct7d: snapshot.pct7d,
+    hasData: snapshot.hasData,
+    byModel: Array.from(snapshot.byModel.entries())
+      .map(([model, usage]) => ({
+        model,
+        tokens5h: usage.tokens5h,
+        tokens7d: usage.tokens7d
+      }))
+      .filter((row) => row.tokens7d > 0)
+      .sort((a, b) => b.tokens7d - a.tokens7d || a.model.localeCompare(b.model))
+  };
 }
