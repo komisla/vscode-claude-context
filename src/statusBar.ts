@@ -46,15 +46,11 @@ export class StatusBarController implements vscode.Disposable {
       })
     );
 
-    this.scheduleHistoryRefresh();
-    this.historyRefreshTimer = setInterval(() => this.scheduleHistoryRefresh(), HISTORY_REFRESH_MS);
     this.render();
   }
 
   public dispose(): void {
-    if (this.historyRefreshTimer !== undefined) {
-      clearInterval(this.historyRefreshTimer);
-    }
+    this.stopHistoryTimer();
 
     for (const subscription of this.subscriptions) {
       subscription.dispose();
@@ -67,9 +63,12 @@ export class StatusBarController implements vscode.Disposable {
     const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', true);
 
     if (this.latest?.fillPercent === undefined) {
+      this.stopHistoryTimer();
       this.item.hide();
       return;
     }
+
+    this.startHistoryTimerIfNeeded();
 
     const fillPercent = Math.round(this.latest.fillPercent);
 
@@ -97,9 +96,32 @@ export class StatusBarController implements vscode.Disposable {
     this.item.show();
   }
 
+  private startHistoryTimerIfNeeded(): void {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
+      this.stopHistoryTimer();
+      this.latestHistory = undefined;
+      return;
+    }
+
+    if (this.historyRefreshTimer !== undefined) {
+      return;
+    }
+
+    this.scheduleHistoryRefresh();
+    this.historyRefreshTimer = setInterval(() => this.scheduleHistoryRefresh(), HISTORY_REFRESH_MS);
+  }
+
+  private stopHistoryTimer(): void {
+    if (this.historyRefreshTimer !== undefined) {
+      clearInterval(this.historyRefreshTimer);
+      this.historyRefreshTimer = undefined;
+    }
+  }
+
   private scheduleHistoryRefresh(): void {
     if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
       this.latestHistory = undefined;
+      this.stopHistoryTimer();
       return;
     }
 
