@@ -27,6 +27,15 @@ interface JsonlCandidate {
   readonly mtimeMs: number;
 }
 
+interface CachedLockFile {
+  readonly workspaceFolders: string[];
+}
+
+interface CachedIdeDirectory {
+  readonly mtimeMs: number;
+  readonly lockPaths: string[];
+}
+
 const DEFAULT_MODEL_LIMITS: ModelLimits = {
   contextWindow: 200_000,
   maxOutputTokens: 8_192
@@ -130,6 +139,8 @@ export class JsonlTailDataSource implements ContextDataSource {
   private currentProjectDir: string | undefined;
   private readonly offsets = new Map<string, number>();
   private readonly remainders = new Map<string, string>();
+  private readonly lockCache = new Map<string, CachedLockFile>();
+  private ideDirectoryCache: CachedIdeDirectory | undefined;
   private disposed = false;
   private refreshing: Promise<void> | undefined;
 
@@ -214,18 +225,23 @@ export class JsonlTailDataSource implements ContextDataSource {
       return;
     }
 
+    const targetDir = projectDir;
     this.projectWatcher?.close();
     this.projectWatcher = undefined;
-    this.currentProjectDir = projectDir;
+    this.currentProjectDir = targetDir;
 
-    this.createWatcher(projectDir, (_event, filename) => {
+    this.createWatcher(targetDir, (_event, filename) => {
       const changedFilename = typeof filename === 'string' ? filename : filename?.toString();
 
       if (changedFilename === undefined || changedFilename.endsWith('.jsonl')) {
         this.scheduleTick();
       }
     }).then((watcher) => {
-      if (!this.disposed && this.currentProjectDir === projectDir) {
+      if (
+        !this.disposed &&
+        this.currentProjectDir === targetDir &&
+        this.projectWatcher === undefined
+      ) {
         this.projectWatcher = watcher;
       } else {
         watcher.close();
@@ -317,27 +333,39 @@ export class JsonlTailDataSource implements ContextDataSource {
     }
 
     const locks = await this.readLockFiles();
-    let bestSession: ActiveSession | undefined;
-    let bestMtimeMs = -1;
-
-    for (const lockPath of locks) {
+    const lockResults = await Promise.all(locks.map(async (lockPath) => {
       const lock = await this.readLock(lockPath);
       const matchedFolder = lock.workspaceFolders.find((folder) =>
         normalizedWorkspaceFolders.includes(normalizeWorkspacePath(folder))
       );
 
       if (matchedFolder === undefined) {
-        continue;
+        return undefined;
       }
 
       const projectDir = path.join(this.getClaudeProjectsRoot(), slugify(matchedFolder));
       const jsonl = await this.findNewestJsonl(projectDir);
 
-      if (jsonl !== undefined && jsonl.mtimeMs > bestMtimeMs) {
-        bestMtimeMs = jsonl.mtimeMs;
+      if (jsonl === undefined) {
+        return undefined;
+      }
+
+      return {
+        projectDir,
+        jsonlPath: jsonl.path,
+        mtimeMs: jsonl.mtimeMs
+      };
+    }));
+
+    let bestSession: ActiveSession | undefined;
+    let bestMtimeMs = -1;
+
+    for (const result of lockResults) {
+      if (result !== undefined && result.mtimeMs > bestMtimeMs) {
+        bestMtimeMs = result.mtimeMs;
         bestSession = {
-          projectDir,
-          jsonlPath: jsonl.path
+          projectDir: result.projectDir,
+          jsonlPath: result.jsonlPath
         };
       }
     }
@@ -346,25 +374,63 @@ export class JsonlTailDataSource implements ContextDataSource {
   }
 
   private async readLockFiles(): Promise<string[]> {
-    let entries: fs.Dirent[];
+    const ideRoot = this.getClaudeIdeRoot();
+    let stats: fs.Stats;
 
     try {
-      entries = await fsp.readdir(this.getClaudeIdeRoot(), { withFileTypes: true });
+      stats = await fsp.stat(ideRoot);
     } catch {
+      this.ideDirectoryCache = undefined;
       return [];
     }
 
-    return entries
+    const cached = this.ideDirectoryCache;
+
+    if (cached !== undefined && cached.mtimeMs === stats.mtimeMs) {
+      return cached.lockPaths;
+    }
+
+    let entries: fs.Dirent[];
+
+    try {
+      entries = await fsp.readdir(ideRoot, { withFileTypes: true });
+    } catch {
+      this.ideDirectoryCache = undefined;
+      return [];
+    }
+
+    const lockPaths = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith('.lock'))
-      .map((entry) => path.join(this.getClaudeIdeRoot(), entry.name));
+      .map((entry) => path.join(ideRoot, entry.name));
+
+    this.ideDirectoryCache = {
+      mtimeMs: stats.mtimeMs,
+      lockPaths
+    };
+
+    const lockPathSet = new Set(lockPaths);
+    for (const cachedPath of this.lockCache.keys()) {
+      if (!lockPathSet.has(cachedPath)) {
+        this.lockCache.delete(cachedPath);
+      }
+    }
+
+    return lockPaths;
   }
 
   private async readLock(lockPath: string): Promise<{ readonly workspaceFolders: readonly string[] }> {
+    const cached = this.lockCache.get(lockPath);
+
+    if (cached !== undefined) {
+      return { workspaceFolders: cached.workspaceFolders };
+    }
+
     let raw: string;
 
     try {
       raw = await fsp.readFile(lockPath, 'utf8');
     } catch {
+      this.lockCache.delete(lockPath);
       return { workspaceFolders: [] };
     }
 
@@ -375,12 +441,15 @@ export class JsonlTailDataSource implements ContextDataSource {
         return { workspaceFolders: [] };
       }
 
-      return {
-        workspaceFolders: parsed.workspaceFolders.filter(
-          (folder): folder is string => typeof folder === 'string'
-        )
-      };
+      const workspaceFolders = parsed.workspaceFolders.filter(
+        (folder): folder is string => typeof folder === 'string'
+      );
+
+      this.lockCache.set(lockPath, { workspaceFolders });
+
+      return { workspaceFolders };
     } catch {
+      this.lockCache.delete(lockPath);
       return { workspaceFolders: [] };
     }
   }
