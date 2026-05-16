@@ -1,9 +1,10 @@
-import type * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import { JsonlTailDataSource } from './jsonlTail';
 
 export interface ContextUpdate {
   readonly fillPercent?: number;
   readonly totalTokens?: number;
+  readonly contextWindow?: number;
   readonly model?: string;
   readonly sessionPath?: string;
   readonly error?: string;
@@ -15,5 +16,5 @@ export interface ContextDataSource extends vscode.Disposable {
 }
 
 export function createDataSource(): ContextDataSource {
-  return new JsonlTailDataSource();
+  return new JsonlTailDataSource(vscode);
 }
