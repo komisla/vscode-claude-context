@@ -14,13 +14,14 @@ const HISTORY_REFRESH_MS = 5 * 60 * 1_000;
 export class StatusBarController implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
   private readonly subscriptions: vscode.Disposable[] = [];
-  private readonly historicalUsage = new HistoricalUsageReader();
+  private readonly historicalUsage: HistoricalUsageReader;
   private historyRefreshTimer: ReturnType<typeof setInterval> | undefined;
   private historyRefreshing: Promise<void> | undefined;
   private latest: ContextUpdate | undefined;
   private latestHistory: HistoricalUsageSnapshot | undefined;
 
-  public constructor(source: ContextDataSource) {
+  public constructor(source: ContextDataSource, historicalUsage: HistoricalUsageReader) {
+    this.historicalUsage = historicalUsage;
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.item.command = 'claudeContext.openPanel';
     this.item.name = 'Claude Context Monitor';
@@ -68,14 +69,15 @@ export class StatusBarController implements vscode.Disposable {
       return;
     }
 
-    this.startHistoryTimerIfNeeded();
-
     const fillPercent = Math.round(this.latest.fillPercent);
 
     if (fillPercent < hideBelow) {
+      this.stopHistoryTimer();
       this.item.hide();
       return;
     }
+
+    this.startHistoryTimerIfNeeded();
 
     const history =
       showHistoricalUsage && this.latestHistory?.hasData === true ? this.latestHistory : undefined;

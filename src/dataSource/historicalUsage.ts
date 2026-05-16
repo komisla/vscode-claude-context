@@ -114,12 +114,14 @@ export class HistoricalUsageReader {
     }
 
     const cached = this.cache.get(jsonlPath);
+    const minTimestamp = nowMs - SEVEN_DAYS_MS;
 
     if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+      if (cached.entries.some((e) => e.timestampMs < minTimestamp)) {
+        this.cache.set(jsonlPath, { ...cached, entries: cached.entries.filter((e) => e.timestampMs >= minTimestamp) });
+      }
       return;
     }
-
-    const minTimestamp = nowMs - SEVEN_DAYS_MS;
     const entries: TokenEntry[] = [];
 
     try {
@@ -146,7 +148,11 @@ export class HistoricalUsageReader {
     });
   }
 
-  private async findJsonlFiles(dir: string): Promise<string[]> {
+  private async findJsonlFiles(dir: string, depth = 0): Promise<string[]> {
+    if (depth > 3) {
+      return [];
+    }
+
     let entries;
 
     try {
@@ -158,10 +164,14 @@ export class HistoricalUsageReader {
     const files: string[] = [];
 
     for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
+
       const entryPath = path.join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        files.push(...(await this.findJsonlFiles(entryPath)));
+        files.push(...(await this.findJsonlFiles(entryPath, depth + 1)));
       } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
         files.push(entryPath);
       }
