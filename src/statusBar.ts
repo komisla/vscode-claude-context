@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { clearInterval, setInterval } from 'timers';
 import type { ContextDataSource, ContextUpdate } from './dataSource';
 import {
   DEFAULT_BUDGET_5H,
@@ -157,7 +156,6 @@ export class StatusBarController implements vscode.Disposable {
     const totalTokens = this.latest?.totalTokens ?? 0;
     const effectiveWindow = this.latest?.effectiveWindow ?? this.latest?.contextWindow ?? 0;
     const tooltip = new vscode.MarkdownString(undefined, true);
-    tooltip.isTrusted = false;
     tooltip.appendText(
       `Context: ${fillPercent}% (${formatCompactTokens(totalTokens)} / ${formatCompactTokens(
         effectiveWindow
