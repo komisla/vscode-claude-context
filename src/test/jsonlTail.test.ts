@@ -368,7 +368,7 @@ async function waitForUpdate(
   });
 }
 
-function snapshotProcessEnv(): NodeJS.ProcessEnv {
+function snapshotProcessEnv(): typeof process.env {
   return {
     HOME: process.env.HOME,
     HOMEDRIVE: process.env.HOMEDRIVE,
@@ -384,7 +384,7 @@ function applyClaudeHome(homeDir: string): void {
   process.env.USERPROFILE = homeDir;
 }
 
-function restoreProcessEnv(originalEnv: NodeJS.ProcessEnv): void {
+function restoreProcessEnv(originalEnv: typeof process.env): void {
   process.env.HOME = originalEnv.HOME;
   process.env.HOMEDRIVE = originalEnv.HOMEDRIVE;
   process.env.HOMEPATH = originalEnv.HOMEPATH;
