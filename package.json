@@ -52,7 +52,7 @@
     "compile": "webpack --mode production",
     "watch": "webpack --mode development --watch",
     "lint": "eslint .",
-    "test": "npm run compile"
+    "test": "npm run compile && tsc --outDir out/test-dist && node --test out/test-dist/test/slugify.test.js out/test-dist/test/jsonlParser.test.js out/test-dist/test/fillPct.test.js"
   },
   "dependencies": {
     "gpt-tokenizer": "^2.9.0"
