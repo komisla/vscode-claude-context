@@ -4,6 +4,7 @@ import { promises as fsPromises } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { ContextUpdate } from '../dataSource';
 import {
   CC_BASE_SYSTEM_PROMPT_TOKENS,
   TOKENS_PER_BUILTIN_TOOL,
@@ -29,13 +30,14 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
     await mkdir(globalClaudeDir, { recursive: true });
     await mkdir(workspaceRoot, { recursive: true });
 
-    const globalClaude = 'global rules @global-import.md';
+    const globalClaude = 'global rules @./global-import.md';
     const globalImport = 'global imported';
-    const parentClaude = 'parent rules @parent-import.md\nRepo @long-kudo/vscode-claude-status';
+    const parentClaude = 'parent rules @./parent-import.md\nRepo @long-kudo/vscode-claude-status';
     const parentImport = 'parent imported';
-    const workspaceClaude = `workspace rules @./workspace-import.md for details @missing.md @my-package.md\nEmail slavik@korbinian.eu\nPackage @types/node`;
+    const workspaceClaude = `workspace rules @./workspace-import.md for details @missing.md @./my-package.md\nLies @issue.md genau\nEmail slavik@korbinian.eu\nPackage @types/node`;
     const workspaceImport = 'workspace imported';
     const bareImport = 'bare import should be counted';
+    const falsePositiveImport = 'false positive should not be counted';
     const emailMatch = 'email-like import should not be counted';
     const repoReference = 'repo reference should not be imported';
     const npmPackage = 'package should not be imported';
@@ -47,6 +49,7 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
     await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
     await writeFile(path.join(workspaceRoot, 'workspace-import.md'), workspaceImport);
     await writeFile(path.join(workspaceRoot, 'my-package.md'), bareImport);
+    await writeFile(path.join(workspaceRoot, 'issue.md'), falsePositiveImport);
     await writeFile(path.join(workspaceRoot, 'korbinian.eu'), emailMatch);
     await mkdir(path.join(root, 'repo', 'long-kudo'), { recursive: true });
     await writeFile(path.join(root, 'repo', 'long-kudo', 'vscode-claude-status'), repoReference);
@@ -226,6 +229,63 @@ test('reconstructor caches for 30 seconds and invalidates when source changes', 
     assert.equal(cached.categories.tools, TOKENS_PER_BUILTIN_TOOL);
     assert.equal(invalidated.categories.tools, TOKENS_PER_BUILTIN_TOOL * 2);
   } finally {
+    clearContextBreakdownCache();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('reconstructor reuses the cache for equivalent sources with different property order', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-cache-key-'));
+  clearContextBreakdownCache();
+
+  const homeDir = path.join(root, 'home');
+  const claudeDir = path.join(homeDir, '.claude');
+  await mkdir(claudeDir, { recursive: true });
+  await writeFile(path.join(claudeDir, 'CLAUDE.md'), 'shared content');
+
+  const mutableFsPromises = fsPromises as {
+    readFile: (...args: unknown[]) => Promise<unknown>;
+  };
+  const originalReadFile = mutableFsPromises.readFile;
+  let claudeMdReadCount = 0;
+
+  mutableFsPromises.readFile = async (...args: unknown[]) => {
+    const [filePath] = args;
+
+    if (typeof filePath === 'string' && filePath.endsWith(path.join('.claude', 'CLAUDE.md'))) {
+      claudeMdReadCount += 1;
+    }
+
+    return originalReadFile(...args);
+  };
+
+  try {
+    const firstSource = {
+      totalTokens: 5_000,
+      effectiveWindow: 178_808,
+      fillPercent: 3
+    } satisfies ContextUpdate;
+    const secondSource = {
+      fillPercent: 3,
+      effectiveWindow: 178_808,
+      totalTokens: 5_000
+    } satisfies ContextUpdate;
+
+    const [first, second] = await Promise.all([
+      reconstructContextBreakdown(firstSource, {
+        homeDir,
+        now: () => 1_000
+      }),
+      reconstructContextBreakdown(secondSource, {
+        homeDir,
+        now: () => 1_000
+      })
+    ]);
+
+    assert.strictEqual(first, second);
+    assert.equal(claudeMdReadCount, 1);
+  } finally {
+    mutableFsPromises.readFile = originalReadFile;
     clearContextBreakdownCache();
     await rm(root, { recursive: true, force: true });
   }

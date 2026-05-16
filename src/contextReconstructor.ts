@@ -294,14 +294,16 @@ function getCacheKey(
   workspaceRoot: string | undefined,
   homeDir: string | undefined
 ): string {
-  return JSON.stringify({
-    sessionPath: source.sessionPath,
-    totalTokens: source.totalTokens,
-    effectiveWindow: source.effectiveWindow,
-    fillPercent: source.fillPercent,
+  return [
+    source.sessionPath,
+    source.totalTokens,
+    source.effectiveWindow,
+    source.fillPercent,
     workspaceRoot,
     homeDir
-  });
+  ]
+    .map(String)
+    .join('|');
 }
 
 function getClaudeMdPathsUpTree(workspaceRoot: string): readonly string[] {
@@ -378,8 +380,7 @@ function extractAtImports(content: string): readonly string[] {
       (importPath.startsWith('./') ||
         importPath.startsWith('../') ||
         importPath.startsWith('~/') ||
-        importPath.startsWith('/') ||
-        importPath.endsWith('.md'))
+        importPath.startsWith('/'))
     ) {
       imports.push(importPath);
     }
