@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import { createDataSource } from './dataSource';
+import { HistoricalUsageReader } from './dataSource/historicalUsage';
 import { StatusBarController } from './statusBar';
 import { BreakdownPanel } from './webview/panel';
 
 export function activate(context: vscode.ExtensionContext): void {
   const source = createDataSource();
-  const statusBar = new StatusBarController(source);
-  const panel = new BreakdownPanel(context.extensionUri);
+  const historicalUsage = new HistoricalUsageReader();
+  const statusBar = new StatusBarController(source, historicalUsage);
+  const panel = new BreakdownPanel(context.extensionUri, historicalUsage);
 
   context.subscriptions.push(
     statusBar,

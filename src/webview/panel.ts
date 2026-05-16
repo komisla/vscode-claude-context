@@ -32,11 +32,13 @@ interface WebviewHistoricalUsageSnapshot {
 
 export class BreakdownPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
-  private readonly historicalUsage = new HistoricalUsageReader();
+  private readonly historicalUsage: HistoricalUsageReader;
   private readonly panelSubscriptions: vscode.Disposable[] = [];
   private postSequence = 0;
 
-  public constructor(private readonly extensionUri: vscode.Uri) {}
+  public constructor(private readonly extensionUri: vscode.Uri, historicalUsage: HistoricalUsageReader) {
+    this.historicalUsage = historicalUsage;
+  }
 
   public dispose(): void {
     this.disposePanelSubscriptions();
