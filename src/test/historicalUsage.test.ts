@@ -143,6 +143,36 @@ test('historical reader refreshes changed files', async () => {
   }
 });
 
+test('historical reader deduplicates concurrent refresh work', async () => {
+  const reader = new HistoricalUsageReader(path.join(tmpdir(), 'claude-history-inflight-root'));
+  const mutable = reader as unknown as {
+    findJsonlFiles: (dir: string) => Promise<string[]>;
+    refreshFile: (jsonlPath: string, nowMs: number) => Promise<void>;
+  };
+
+  let findCalls = 0;
+  let refreshFileCalls = 0;
+
+  mutable.findJsonlFiles = async () => {
+    findCalls += 1;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+    return [path.join(tmpdir(), 'session.jsonl')];
+  };
+
+  mutable.refreshFile = async () => {
+    refreshFileCalls += 1;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+  };
+
+  const first = reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+  const second = reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+  const [firstSnapshot, secondSnapshot] = await Promise.all([first, second]);
+
+  assert.equal(findCalls, 1);
+  assert.equal(refreshFileCalls, 1);
+  assert.strictEqual(firstSnapshot, secondSnapshot);
+});
+
 function makeAssistantLine(timestamp: string, inputTokens: number, model?: unknown): unknown {
   return {
     timestamp,
