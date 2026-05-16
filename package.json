@@ -1,0 +1,72 @@
+{
+  "name": "vscode-claude-context",
+  "displayName": "Claude Context Monitor",
+  "description": "Live Claude Code context window monitor with traffic-light status bar and token breakdown panel",
+  "version": "0.1.0",
+  "publisher": "komisla",
+  "private": true,
+  "engines": {
+    "vscode": "^1.73.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeContext.openPanel",
+        "title": "Claude Context: Open Breakdown Panel"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Context Monitor",
+      "properties": {
+        "claudeContext.hideBelow": {
+          "type": "number",
+          "default": 40,
+          "description": "Hide status bar indicator when context fill is below this percentage"
+        },
+        "claudeContext.showHistoricalUsage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show 5h and 7d token usage in status bar"
+        },
+        "claudeContext.budget5h": {
+          "type": "number",
+          "default": 5000000,
+          "description": "Token budget for the 5-hour window (adjust to your Claude plan)"
+        },
+        "claudeContext.budget7d": {
+          "type": "number",
+          "default": 50000000,
+          "description": "Token budget for the 7-day window (adjust to your Claude plan)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "webpack --mode production",
+    "watch": "webpack --mode development --watch",
+    "lint": "eslint .",
+    "test": "npm run compile"
+  },
+  "dependencies": {
+    "gpt-tokenizer": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.73.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.0",
+    "@typescript-eslint/parser": "^8.46.0",
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.37.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.4.5",
+    "webpack": "^5.91.0",
+    "webpack-cli": "^5.1.4"
+  }
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude Context Breakdown</title>
+    <style>
+      body {
+        color: var(--vscode-foreground);
+        background: var(--vscode-editor-background);
+        font-family: var(--vscode-font-family);
+        padding: 24px;
+      }
+
+      .muted {
+        color: var(--vscode-descriptionForeground);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Claude Context Breakdown</h1>
+    <p id="status" class="muted">Waiting for context data.</p>
+    <script>
+      const status = document.getElementById('status');
+
+      window.addEventListener('message', (event) => {
+        if (event.data?.type !== 'contextBreakdown') {
+          return;
+        }
+
+        const source = event.data.payload.source;
+        status.textContent =
+          source.fillPercent === undefined
+            ? 'Claude Code session not found.'
+            : `Context fill: ${Math.round(source.fillPercent)}%`;
+      });
+    </script>
+  </body>
+</html>
