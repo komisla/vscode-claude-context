@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import type { ContextDataSource } from '../dataSource';
-import { reconstructContextBreakdown } from '../contextReconstructor';
+import { reconstructContextBreakdown, type ContextBreakdown } from '../contextReconstructor';
 import {
   DEFAULT_BUDGET_5H,
   DEFAULT_BUDGET_7D,
@@ -33,6 +33,26 @@ interface WebviewHistoricalUsageSnapshot {
   readonly hasData: boolean;
   readonly byModel: readonly WebviewModelUsage[];
 }
+
+interface WebviewSnapshotPayload {
+  readonly breakdown: ContextBreakdown;
+  readonly history?: WebviewHistoricalUsageSnapshot;
+  readonly error?: string;
+}
+
+type WebviewOutgoingMessage =
+  | {
+      readonly type: 'contextSnapshot';
+      readonly payload: WebviewSnapshotPayload;
+    }
+  | {
+      readonly type: 'commandResult';
+      readonly payload: { readonly message: string };
+    }
+  | {
+      readonly type: 'newChatUnavailable';
+      readonly payload: { readonly message: string };
+    };
 
 export class BreakdownPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
@@ -106,8 +126,9 @@ export class BreakdownPanel implements vscode.Disposable {
     }
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const latest = source.getLatest();
     const [breakdown, history] = await Promise.all([
-      reconstructContextBreakdown(source.getLatest(), { workspaceRoot }),
+      reconstructContextBreakdown(latest, { workspaceRoot }),
       this.readHistoricalUsage()
     ]);
 
@@ -115,11 +136,12 @@ export class BreakdownPanel implements vscode.Disposable {
       return;
     }
 
-    await panel.webview.postMessage({
+    await this.postWebviewMessage(panel, {
       type: 'contextSnapshot',
       payload: {
         breakdown,
-        history: history === undefined ? undefined : toWebviewHistoricalUsage(history)
+        history: history === undefined ? undefined : toWebviewHistoricalUsage(history),
+        error: latest.error
       }
     });
   }
@@ -149,7 +171,7 @@ export class BreakdownPanel implements vscode.Disposable {
     switch (message.type) {
       case 'copyCompact':
         await vscode.env.clipboard.writeText('/compact');
-        await panel.webview.postMessage({
+        await this.postWebviewMessage(panel, {
           type: 'commandResult',
           payload: {
             message: 'Copied /compact'
@@ -167,7 +189,7 @@ export class BreakdownPanel implements vscode.Disposable {
           );
         }
 
-        await panel.webview.postMessage({
+        await this.postWebviewMessage(panel, {
           type: opened ? 'commandResult' : 'newChatUnavailable',
           payload: {
             message: opened
@@ -181,6 +203,17 @@ export class BreakdownPanel implements vscode.Disposable {
         const exhaustiveCheck: never = message;
         return exhaustiveCheck;
       }
+    }
+  }
+
+  private async postWebviewMessage(
+    panel: vscode.WebviewPanel,
+    message: WebviewOutgoingMessage
+  ): Promise<void> {
+    try {
+      await panel.webview.postMessage(message);
+    } catch {
+      // The panel can be disposed between the guard and the send.
     }
   }
 }

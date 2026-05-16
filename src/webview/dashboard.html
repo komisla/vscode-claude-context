@@ -179,6 +179,11 @@
         padding: 16px;
       }
 
+      .empty.danger {
+        border-left: 3px solid var(--vscode-errorForeground);
+        background: var(--vscode-inputValidation-errorBackground);
+      }
+
       details {
         border: 1px solid var(--vscode-panel-border);
         background: var(--vscode-sideBar-background);
@@ -327,6 +332,7 @@
         ['pct5h', 'Last 5 h'],
         ['pct7d', 'Last 7 d']
       ];
+      const NO_SESSION_ERROR = 'Claude Code session not found';
 
       const dashboard = document.getElementById('dashboard');
       const emptyState = document.getElementById('empty-state');
@@ -377,11 +383,17 @@
 
         if (!breakdown || (breakdown.totalTokens === 0 && breakdown.fillPercent === 0)) {
           dashboard.classList.add('hidden');
+          emptyState.textContent =
+            snapshot.error === NO_SESSION_ERROR
+              ? 'No active Claude Code session detected.'
+              : 'Waiting for context data.';
+          emptyState.classList.toggle('danger', snapshot.error === NO_SESSION_ERROR);
           emptyState.classList.remove('hidden');
           return;
         }
 
         emptyState.classList.add('hidden');
+        emptyState.classList.remove('danger');
         dashboard.classList.remove('hidden');
         renderContext(breakdown);
         renderHistory(snapshot.history);
