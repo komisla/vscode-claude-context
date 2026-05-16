@@ -25,7 +25,7 @@ test('historical parser sums assistant usage with timestamp', () => {
   assert.deepEqual(parseHistoricalUsageLine(JSON.stringify(line)), {
     timestampMs: Date.parse(line.timestamp),
     tokens: 100,
-    model: 'unknown'
+    model: 'unknown/absent'
   });
 });
 
@@ -92,7 +92,8 @@ test('historical reader groups usage by model', async () => {
         JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100, 'claude-sonnet-4-6')),
         JSON.stringify(makeAssistantLine('2026-05-16T10:00:00Z', 200, 'claude-opus-4-7')),
         JSON.stringify(makeAssistantLine('2026-05-15T11:00:00Z', 300, 'claude-sonnet-4-6')),
-        JSON.stringify(makeAssistantLine('2026-05-15T10:00:00Z', 400))
+        JSON.stringify(makeAssistantLine('2026-05-16T09:00:00Z', 400)),
+        JSON.stringify(makeAssistantLine('2026-05-16T08:00:00Z', 500, 123))
       ].join('\n')
     );
 
@@ -107,9 +108,13 @@ test('historical reader groups usage by model', async () => {
       tokens5h: 200,
       tokens7d: 200
     });
-    assert.deepEqual(snapshot.byModel.get('unknown'), {
-      tokens5h: 0,
+    assert.deepEqual(snapshot.byModel.get('unknown/absent'), {
+      tokens5h: 400,
       tokens7d: 400
+    });
+    assert.deepEqual(snapshot.byModel.get('unknown/invalid'), {
+      tokens5h: 500,
+      tokens7d: 500
     });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -138,7 +143,7 @@ test('historical reader refreshes changed files', async () => {
   }
 });
 
-function makeAssistantLine(timestamp: string, inputTokens: number, model?: string): unknown {
+function makeAssistantLine(timestamp: string, inputTokens: number, model?: unknown): unknown {
   return {
     timestamp,
     type: 'message',

@@ -29,12 +29,14 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
     await mkdir(globalClaudeDir, { recursive: true });
     await mkdir(workspaceRoot, { recursive: true });
 
-    const globalClaude = 'global rules @global-import.md';
+    const globalClaude = 'global rules @./global-import.md';
     const globalImport = 'global imported';
-    const parentClaude = 'parent rules @parent-import.md\nRepo @long-kudo/vscode-claude-status';
+    const parentClaude = 'parent rules @./parent-import.md\nRepo @long-kudo/vscode-claude-status';
     const parentImport = 'parent imported';
-    const workspaceClaude = `workspace rules @./workspace-import.md @missing.md\nEmail slavik@korbinian.eu\nPackage @types/node`;
+    const workspaceClaude = `workspace rules @./workspace-import.md @missing.md @my-package.md\nEmail slavik@korbinian.eu\nPackage @types/node`;
     const workspaceImport = 'workspace imported';
+    const bareImport = 'bare import should not be counted';
+    const emailMatch = 'email-like import should not be counted';
     const repoReference = 'repo reference should not be imported';
     const npmPackage = 'package should not be imported';
 
@@ -44,6 +46,8 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
     await writeFile(path.join(root, 'repo', 'parent-import.md'), parentImport);
     await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
     await writeFile(path.join(workspaceRoot, 'workspace-import.md'), workspaceImport);
+    await writeFile(path.join(workspaceRoot, 'my-package.md'), bareImport);
+    await writeFile(path.join(workspaceRoot, 'korbinian.eu'), emailMatch);
     await mkdir(path.join(root, 'repo', 'long-kudo'), { recursive: true });
     await writeFile(path.join(root, 'repo', 'long-kudo', 'vscode-claude-status'), repoReference);
     await mkdir(path.join(workspaceRoot, 'types'), { recursive: true });
@@ -246,7 +250,7 @@ test('reconstructor shares in-flight work for concurrent calls', async () => {
 
     if (typeof filePath === 'string' && filePath.endsWith(path.join('.claude', 'CLAUDE.md'))) {
       readCount += 1;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
     }
 
     return originalReadFile(...args);

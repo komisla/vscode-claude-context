@@ -27,11 +27,9 @@ interface JsonlCandidate {
   readonly mtimeMs: number;
 }
 
-export const MODEL_TABLE: Readonly<Record<string, ModelLimits>> = {
-  'claude-sonnet-4': { contextWindow: 200_000, maxOutputTokens: 8_192 },
-  'claude-opus-4': { contextWindow: 200_000, maxOutputTokens: 8_192 },
-  'claude-haiku-4': { contextWindow: 200_000, maxOutputTokens: 8_192 },
-  unknown: { contextWindow: 200_000, maxOutputTokens: 8_192 }
+const DEFAULT_MODEL_LIMITS: ModelLimits = {
+  contextWindow: 200_000,
+  maxOutputTokens: 8_192
 };
 
 export function slugify(cwd: string): string {
@@ -60,12 +58,8 @@ export function getUsageTotal(usage: unknown): number {
 }
 
 export function getModelLimits(model: string | undefined): ModelLimits {
-  const modelName = model ?? 'unknown';
-  const modelKey =
-    Object.keys(MODEL_TABLE).find((key) => key !== 'unknown' && modelName.startsWith(key)) ??
-    'unknown';
-
-  return MODEL_TABLE[modelKey];
+  void model;
+  return DEFAULT_MODEL_LIMITS;
 }
 
 export function calculateFillPercent(
