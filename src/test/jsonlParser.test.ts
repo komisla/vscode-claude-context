@@ -61,6 +61,33 @@ test('parser ignores iteration usage and uses only outer usage', () => {
   assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'session.jsonl')?.totalTokens, 2);
 });
 
+test('parser normalizes missing and invalid models consistently', () => {
+  const baseLine = {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      usage: {
+        input_tokens: 1
+      }
+    }
+  };
+
+  assert.equal(parseContextUpdateFromLine(JSON.stringify(baseLine), 'session.jsonl')?.model, 'unknown/absent');
+  assert.equal(
+    parseContextUpdateFromLine(
+      JSON.stringify({
+        ...baseLine,
+        message: {
+          ...baseLine.message,
+          model: 123
+        }
+      }),
+      'session.jsonl'
+    )?.model,
+    'unknown/invalid'
+  );
+});
+
 test('parser skips malformed JSONL lines', () => {
   assert.equal(parseContextUpdateFromLine('{', 'session.jsonl'), undefined);
 });

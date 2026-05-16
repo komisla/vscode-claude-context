@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { calculateFillPercent } from '../dataSource/jsonlTail';
 
 test('fill percent uses effective context window', () => {
-  const { fillPercent, contextWindow } = calculateFillPercent(89_404, 'claude-sonnet-4-20250514');
+  const known = calculateFillPercent(77_500, 'claude-opus-4-5:thinking');
+  const unknown = calculateFillPercent(77_500, 'unexpected-model');
 
-  assert.equal(contextWindow, 200_000);
-  assert.equal(fillPercent, 50);
+  assert.equal(known.contextWindow, 200_000);
+  assert.equal(known.effectiveWindow, 155_000);
+  assert.equal(known.fillPercent, 50);
+  assert.notEqual(known.effectiveWindow, unknown.effectiveWindow);
+  assert.notEqual(known.fillPercent, unknown.fillPercent);
 });
 
 test('fill percent caps at 100', () => {

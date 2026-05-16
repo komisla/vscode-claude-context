@@ -41,6 +41,15 @@ const DEFAULT_MODEL_LIMITS: ModelLimits = {
   maxOutputTokens: 8_192
 };
 
+export const MODEL_TABLE: Readonly<Record<string, ModelLimits>> = {
+  'claude-opus-4-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  'claude-sonnet-4-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
+  'claude-haiku-4-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
+  'claude-opus-4': { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  'claude-sonnet-4': { contextWindow: 200_000, maxOutputTokens: 8_192 },
+  'claude-haiku-4': { contextWindow: 200_000, maxOutputTokens: 8_192 }
+};
+
 export function slugify(cwd: string): string {
   return cwd.replace(/:/g, '-').replace(/[/\\]/g, '-');
 }
@@ -67,7 +76,12 @@ export function getUsageTotal(usage: unknown): number {
 }
 
 export function getModelLimits(model: string | undefined): ModelLimits {
-  void model;
+  const normalizedModel = normalizeModelKey(model);
+
+  if (normalizedModel !== undefined && Object.hasOwn(MODEL_TABLE, normalizedModel)) {
+    return MODEL_TABLE[normalizedModel];
+  }
+
   return DEFAULT_MODEL_LIMITS;
 }
 
@@ -110,7 +124,7 @@ export function parseContextUpdateFromLine(
 
   const usage = line.message.usage;
   const totalTokens = getUsageTotal(usage);
-  const model = typeof line.message.model === 'string' ? line.message.model : 'unknown';
+  const model = normalizeModel(line.message);
   const { fillPercent, contextWindow, effectiveWindow } = calculateFillPercent(totalTokens, model);
 
   return {
@@ -561,6 +575,43 @@ function normalizeWorkspacePath(value: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+export function normalizeModel(message: unknown): string {
+  if (!isRecord(message)) {
+    return 'unknown/invalid';
+  }
+
+  if (!Object.hasOwn(message, 'model')) {
+    return 'unknown/absent';
+  }
+
+  const model = message.model;
+
+  if (typeof model !== 'string') {
+    return 'unknown/invalid';
+  }
+
+  const normalizedModel = model.trim();
+
+  return normalizedModel === '' ? 'unknown/invalid' : normalizedModel;
+}
+
+function normalizeModelKey(model: string | undefined): string | undefined {
+  if (typeof model !== 'string') {
+    return undefined;
+  }
+
+  const normalizedModel = model.trim().toLowerCase();
+
+  if (normalizedModel === '') {
+    return undefined;
+  }
+
+  const suffixIndex = normalizedModel.indexOf(':');
+  const withoutSuffix = suffixIndex === -1 ? normalizedModel : normalizedModel.slice(0, suffixIndex);
+
+  return withoutSuffix.replace(/-(\d{8})$/, '');
 }
 
 function numberValue(value: unknown): number {
