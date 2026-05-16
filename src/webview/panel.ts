@@ -1,50 +1,155 @@
 import * as vscode from 'vscode';
 import type { ContextDataSource } from '../dataSource';
 import { reconstructContextBreakdown } from '../contextReconstructor';
+import {
+  DEFAULT_BUDGET_5H,
+  DEFAULT_BUDGET_7D,
+  HistoricalUsageReader,
+  type HistoricalUsageBudgets,
+  type HistoricalUsageSnapshot
+} from '../dataSource/historicalUsage';
 import dashboardHtml from './dashboard.html';
 
-export class BreakdownPanel {
+interface WebviewCommand {
+  readonly type?: unknown;
+}
+
+export class BreakdownPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
+  private readonly historicalUsage = new HistoricalUsageReader();
+  private readonly panelSubscriptions: vscode.Disposable[] = [];
+  private postSequence = 0;
 
   public constructor(private readonly extensionUri: vscode.Uri) {}
+
+  public dispose(): void {
+    this.disposePanelSubscriptions();
+    this.panel?.dispose();
+    this.panel = undefined;
+  }
 
   public open(source: ContextDataSource): void {
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.One);
-      this.postBreakdown(source);
+      this.postSnapshot(source);
       return;
     }
 
-    this.panel = vscode.window.createWebviewPanel(
+    const panel = vscode.window.createWebviewPanel(
       'claudeContextBreakdown',
       'Claude Context Breakdown',
       vscode.ViewColumn.One,
       {
         enableScripts: true,
-        localResourceRoots: [this.extensionUri]
+        localResourceRoots: [this.extensionUri],
+        retainContextWhenHidden: false
       }
     );
 
-    this.panel.webview.html = dashboardHtml;
-    this.panel.onDidDispose(() => {
-      this.panel = undefined;
-    });
+    this.panel = panel;
+    panel.webview.html = dashboardHtml;
 
-    this.postBreakdown(source);
+    this.panelSubscriptions.push(
+      panel.onDidDispose(() => {
+        this.disposePanelSubscriptions();
+        this.panel = undefined;
+      }),
+      panel.webview.onDidReceiveMessage((message: WebviewCommand) => {
+        void this.handleMessage(panel, message);
+      }),
+      source.onDidChange(() => {
+        void this.postSnapshot(source);
+      })
+    );
+
+    this.postSnapshot(source);
   }
 
-  private async postBreakdown(source: ContextDataSource): Promise<void> {
+  private disposePanelSubscriptions(): void {
+    while (this.panelSubscriptions.length > 0) {
+      this.panelSubscriptions.pop()?.dispose();
+    }
+  }
+
+  private async postSnapshot(source: ContextDataSource): Promise<void> {
     const panel = this.panel;
+    const sequence = ++this.postSequence;
 
     if (!panel) {
       return;
     }
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const breakdown = await reconstructContextBreakdown(source.getLatest(), { workspaceRoot });
+    const [breakdown, history] = await Promise.all([
+      reconstructContextBreakdown(source.getLatest(), { workspaceRoot }),
+      this.readHistoricalUsage()
+    ]);
+
+    if (this.panel !== panel || sequence !== this.postSequence) {
+      return;
+    }
+
     await panel.webview.postMessage({
-      type: 'contextBreakdown',
-      payload: breakdown
+      type: 'contextSnapshot',
+      payload: {
+        breakdown,
+        history
+      }
     });
+  }
+
+  private async readHistoricalUsage(): Promise<HistoricalUsageSnapshot | undefined> {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
+      return undefined;
+    }
+
+    try {
+      return await this.historicalUsage.refresh(this.getHistoricalUsageBudgets());
+    } catch {
+      return undefined;
+    }
+  }
+
+  private getHistoricalUsageBudgets(): HistoricalUsageBudgets {
+    const config = vscode.workspace.getConfiguration('claudeContext');
+
+    return {
+      budget5h: config.get<number>('budget5h', DEFAULT_BUDGET_5H),
+      budget7d: config.get<number>('budget7d', DEFAULT_BUDGET_7D)
+    };
+  }
+
+  private async handleMessage(panel: vscode.WebviewPanel, message: WebviewCommand): Promise<void> {
+    if (message.type === 'copyCompact') {
+      await vscode.env.clipboard.writeText('/compact');
+      await panel.webview.postMessage({
+        type: 'commandResult',
+        payload: {
+          message: 'Copied /compact'
+        }
+      });
+      return;
+    }
+
+    if (message.type === 'startNewChat') {
+      const opened = await vscode.env.openExternal(
+        vscode.Uri.parse('vscode://anthropic.claude-code/new-session')
+      );
+
+      if (!opened) {
+        void vscode.window.showInformationMessage(
+          'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.'
+        );
+      }
+
+      await panel.webview.postMessage({
+        type: opened ? 'commandResult' : 'newChatUnavailable',
+        payload: {
+          message: opened
+            ? 'Opening new Claude Code chat'
+            : 'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.'
+        }
+      });
+    }
   }
 }

@@ -10,6 +10,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     statusBar,
+    panel,
     vscode.commands.registerCommand('claudeContext.openPanel', () => panel.open(source)),
     source
   );
