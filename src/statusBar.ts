@@ -6,7 +6,7 @@ export class StatusBarController implements vscode.Disposable {
   private readonly subscriptions: vscode.Disposable[] = [];
   private latest: ContextUpdate | undefined;
 
-  public constructor(source: ContextDataSource, context: vscode.ExtensionContext) {
+  public constructor(source: ContextDataSource) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.item.command = 'claudeContext.openPanel';
     this.item.name = 'Claude Context Monitor';
@@ -24,7 +24,6 @@ export class StatusBarController implements vscode.Disposable {
       })
     );
 
-    context.subscriptions.push(...this.subscriptions);
     this.render();
   }
 

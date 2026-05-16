@@ -5,7 +5,7 @@ import { BreakdownPanel } from './webview/panel';
 
 export function activate(context: vscode.ExtensionContext): void {
   const source = createDataSource();
-  const statusBar = new StatusBarController(source, context);
+  const statusBar = new StatusBarController(source);
   const panel = new BreakdownPanel(context.extensionUri);
 
   context.subscriptions.push(

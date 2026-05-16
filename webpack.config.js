@@ -38,7 +38,7 @@ const config = {
       }
     ]
   },
-  devtool: 'source-map'
+  devtool: 'hidden-source-map'
 };
 
 module.exports = config;
