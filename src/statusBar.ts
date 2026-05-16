@@ -81,7 +81,7 @@ export class StatusBarController implements vscode.Disposable {
 
     const history =
       showHistoricalUsage && this.latestHistory?.hasData === true ? this.latestHistory : undefined;
-    const parts = [`ctx ${fillPercent}%`];
+    const parts = [`$(hubot) ctx ${fillPercent}%`];
 
     if (history !== undefined) {
       parts.push(`5h ${Math.round(history.pct5h)}%`, `7d ${Math.round(history.pct7d)}%`);
