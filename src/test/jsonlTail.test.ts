@@ -323,6 +323,50 @@ test('JsonlTailDataSource seeds the offset on first encounter of an existing jso
   }
 });
 
+test('JsonlTailDataSource clears stale remainders after jsonl truncation', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-truncation-');
+  const originalEnv = snapshotProcessEnv();
+
+  applyClaudeHome(fixture.homeDir);
+
+  const oldTurn = `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 10))}\n`;
+  const staleRemainder =
+    '{"timestamp":"2026-05-16T11:00:01Z","type":"message","message":{"role":"assistant","usage":{"input_tokens":';
+  const newTurn = `${JSON.stringify(makeAssistantLine('2026-05-16T11:05:00Z', 42))}\n`;
+
+  await writeFile(fixture.sessionPath, `${oldTurn}${staleRemainder}`);
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]));
+
+  try {
+    await delay(50);
+
+    const mutable = dataSource as unknown as {
+      offsets: Map<string, number>;
+      remainders: Map<string, string>;
+      readNewBytes: (filePath: string) => Promise<void>;
+    };
+
+    const oldStats = await fsp.stat(fixture.sessionPath);
+    mutable.offsets.set(fixture.sessionPath, oldStats.size);
+    mutable.remainders.set(fixture.sessionPath, staleRemainder);
+
+    await writeFile(fixture.sessionPath, newTurn);
+
+    const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 42);
+    await mutable.readNewBytes(fixture.sessionPath);
+
+    const update = await nextUpdate;
+    assert.equal(update.totalTokens, 42);
+    assert.equal(update.sessionPath, fixture.sessionPath);
+    assert.equal(mutable.remainders.get(fixture.sessionPath) ?? '', '');
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('JsonlTailDataSource preserves CRLF boundaries across file chunks', async () => {
   const fixture = await createClaudeFixture('claude-jsonl-tail-crlf-');
   const originalEnv = snapshotProcessEnv();

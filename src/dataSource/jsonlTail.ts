@@ -523,7 +523,13 @@ export class JsonlTailDataSource implements ContextDataSource {
     }
 
     const previousOffset = this.offsets.get(filePath) ?? 0;
-    const offset = stats.size < previousOffset ? 0 : previousOffset;
+    const truncated = stats.size < previousOffset;
+
+    if (truncated) {
+      this.remainders.delete(filePath);
+    }
+
+    const offset = truncated ? 0 : previousOffset;
 
     if (stats.size === offset) {
       return;
