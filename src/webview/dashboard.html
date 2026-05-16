@@ -9,35 +9,504 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Claude Context Breakdown</title>
     <style>
+      * {
+        box-sizing: border-box;
+      }
+
       body {
         color: var(--vscode-foreground);
         background: var(--vscode-editor-background);
         font-family: var(--vscode-font-family);
+        font-size: var(--vscode-font-size);
         padding: 24px;
+        margin: 0;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+        line-height: 1.25;
+        margin-bottom: 18px;
+      }
+
+      h2 {
+        font-size: 16px;
+        line-height: 1.35;
+        margin-bottom: 12px;
+      }
+
+      h3 {
+        font-size: 13px;
+        line-height: 1.35;
+        margin-bottom: 8px;
+      }
+
+      a {
+        color: var(--vscode-textLink-foreground);
+      }
+
+      button {
+        color: var(--vscode-button-foreground);
+        background: var(--vscode-button-background);
+        border: 1px solid var(--vscode-button-border);
+        border-radius: 2px;
+        cursor: pointer;
+        font: inherit;
+        padding: 6px 10px;
+      }
+
+      button:hover {
+        background: var(--vscode-button-hoverBackground);
+      }
+
+      .panel {
+        border: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-sideBar-background);
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+
+      .panel-header,
+      .metric-row,
+      .category-row,
+      .total-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .panel-header {
+        align-items: center;
+        margin-bottom: 12px;
+      }
+
+      .metric-row,
+      .category-row {
+        display: grid;
+        grid-template-columns: minmax(120px, 1fr) minmax(120px, 2fr) minmax(96px, auto);
+        align-items: center;
+        gap: 12px;
+        margin: 10px 0;
+      }
+
+      .label {
+        font-weight: 600;
+      }
+
+      .value {
+        text-align: right;
+        white-space: nowrap;
       }
 
       .muted {
         color: var(--vscode-descriptionForeground);
       }
+
+      .status {
+        margin-bottom: 0;
+      }
+
+      .bar {
+        height: 10px;
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-panel-border);
+        overflow: hidden;
+      }
+
+      .bar.large {
+        height: 14px;
+      }
+
+      .bar-fill {
+        height: 100%;
+        min-width: 0;
+        background: var(--vscode-progressBar-background);
+      }
+
+      .bar-fill.good {
+        background: var(--vscode-testing-iconPassed);
+      }
+
+      .bar-fill.warning {
+        background: var(--vscode-editorWarning-foreground);
+      }
+
+      .bar-fill.danger {
+        background: var(--vscode-errorForeground);
+      }
+
+      .notice {
+        border-left: 3px solid var(--vscode-editorWarning-foreground);
+        background: var(--vscode-inputValidation-warningBackground);
+        padding: 10px 12px;
+        margin: 12px 0;
+      }
+
+      .notice.danger {
+        border-left-color: var(--vscode-errorForeground);
+        background: var(--vscode-inputValidation-errorBackground);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .badge {
+        color: var(--vscode-badge-foreground);
+        background: var(--vscode-badge-background);
+        border-radius: 999px;
+        display: inline-block;
+        font-size: 12px;
+        padding: 2px 8px;
+      }
+
+      .empty {
+        border: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-sideBar-background);
+        padding: 16px;
+      }
+
+      details {
+        border: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-sideBar-background);
+        padding: 12px 16px;
+      }
+
+      summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      ol {
+        padding-left: 22px;
+      }
+
+      li {
+        margin: 10px 0;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media (max-width: 560px) {
+        body {
+          padding: 16px;
+        }
+
+        .panel-header,
+        .total-row {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .metric-row,
+        .category-row {
+          grid-template-columns: 1fr;
+          gap: 6px;
+        }
+
+        .value {
+          text-align: left;
+        }
+      }
     </style>
   </head>
   <body>
     <h1>Claude Context Breakdown</h1>
-    <p id="status" class="muted">Waiting for context data.</p>
+
+    <main id="dashboard" class="hidden">
+      <section class="panel" aria-labelledby="context-title">
+        <div class="panel-header">
+          <h2 id="context-title">Context Window</h2>
+          <strong id="fill-value">0%</strong>
+        </div>
+        <div
+          class="bar large"
+          role="progressbar"
+          aria-label="Context fill"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        >
+          <div id="fill-bar" class="bar-fill good"></div>
+        </div>
+        <p id="threshold-message" class="notice hidden"></p>
+
+        <h3>Current session</h3>
+        <div id="category-list"></div>
+        <div class="total-row">
+          <p id="total-line" class="muted status"></p>
+          <span class="badge">± rough estimate</span>
+        </div>
+
+        <div id="actions" class="actions hidden">
+          <button id="copy-compact" type="button">Copy /compact</button>
+          <a id="start-new-chat" href="#">Start new chat</a>
+          <span id="command-status" class="muted"></span>
+        </div>
+        <p id="new-chat-instructions" class="muted hidden">
+          Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.
+        </p>
+      </section>
+
+      <section class="panel" aria-labelledby="history-title">
+        <h2 id="history-title">Token usage vs. plan budget</h2>
+        <div id="history-list"></div>
+      </section>
+
+      <details>
+        <summary>How context fill affects response quality</summary>
+        <p class="muted">
+          The 40% and 60% thresholds are quality heuristics, not Anthropic product limits.
+        </p>
+        <ol>
+          <li>
+            <strong>Lost in the Middle effect</strong> - Liu et al. 2023: recall degrades
+            measurably for information in the middle of long contexts. Beginning and end are
+            retrieved far more reliably.
+            <a href="https://arxiv.org/abs/2307.03172">Source</a>
+          </li>
+          <li>
+            <strong>Effective context is much smaller than claimed context</strong> - NoLiMa
+            benchmark, Modarressi et al. 2025: 11 of 13 models reach at most half their baseline
+            score at 32K tokens. Claude 3.5 Sonnet measured effective length: about 8K despite a
+            200K window.
+            <a href="https://arxiv.org/abs/2502.05167">Source</a>
+          </li>
+          <li>
+            <strong>Context rot is a gradient, not a cliff</strong> - Anthropic Engineering:
+            finite attention spreads thinner as context grows; quality degrades well before 100%.
+            <a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Source</a>
+          </li>
+          <li>
+            <strong>Practical guideline</strong> - Anthropic Help Center recommends /clear between
+            tasks and /compact for long-running sessions. Auto-compact default: about 95%.
+            <a href="https://support.claude.com/en/articles/14552983-models-usage-and-limits-in-claude-code">Source</a>
+          </li>
+          <li>
+            <strong>Fill % includes cache reads</strong> - used_percentage = input_tokens +
+            cache_creation + cache_read. A session can appear full even when most tokens are cached,
+            not new content.
+          </li>
+        </ol>
+      </details>
+    </main>
+
+    <p id="empty-state" class="empty muted">Waiting for context data.</p>
+
     <script>
-      const status = document.getElementById('status');
+      const vscode = acquireVsCodeApi();
+      const categoryLabels = [
+        ['systemPrompt', 'System prompt'],
+        ['claudeMd', 'CLAUDE.md'],
+        ['memory', 'Memory files'],
+        ['tools', 'Tools'],
+        ['conversation', 'Conversation']
+      ];
+      const historyLabels = [
+        ['pct5h', 'Last 5 h'],
+        ['pct7d', 'Last 7 d']
+      ];
+
+      const dashboard = document.getElementById('dashboard');
+      const emptyState = document.getElementById('empty-state');
+      const fillValue = document.getElementById('fill-value');
+      const fillBar = document.getElementById('fill-bar');
+      const thresholdMessage = document.getElementById('threshold-message');
+      const categoryList = document.getElementById('category-list');
+      const totalLine = document.getElementById('total-line');
+      const actions = document.getElementById('actions');
+      const copyCompact = document.getElementById('copy-compact');
+      const startNewChat = document.getElementById('start-new-chat');
+      const commandStatus = document.getElementById('command-status');
+      const newChatInstructions = document.getElementById('new-chat-instructions');
+      const historyList = document.getElementById('history-list');
+
+      copyCompact.addEventListener('click', () => {
+        vscode.postMessage({ type: 'copyCompact' });
+      });
+
+      startNewChat.addEventListener('click', (event) => {
+        event.preventDefault();
+        vscode.postMessage({ type: 'startNewChat' });
+      });
 
       window.addEventListener('message', (event) => {
-        if (event.data?.type !== 'contextBreakdown') {
+        if (event.data?.type === 'contextSnapshot') {
+          renderSnapshot(event.data.payload);
           return;
         }
 
-        const breakdown = event.data.payload;
-        status.textContent =
-          breakdown.totalTokens === 0 && breakdown.fillPercent === 0
-            ? 'Claude Code session not found.'
-            : `Context fill: ${Math.round(breakdown.fillPercent)}%`;
+        if (event.data?.type === 'commandResult') {
+          commandStatus.textContent = event.data.payload.message;
+          newChatInstructions.classList.add('hidden');
+          return;
+        }
+
+        if (event.data?.type === 'newChatUnavailable') {
+          commandStatus.textContent = event.data.payload.message;
+          newChatInstructions.classList.remove('hidden');
+        }
       });
+
+      function renderSnapshot(snapshot) {
+        const breakdown = snapshot.breakdown;
+
+        if (!breakdown || (breakdown.totalTokens === 0 && breakdown.fillPercent === 0)) {
+          dashboard.classList.add('hidden');
+          emptyState.classList.remove('hidden');
+          return;
+        }
+
+        emptyState.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        renderContext(breakdown);
+        renderHistory(snapshot.history);
+      }
+
+      function renderContext(breakdown) {
+        const fillPercent = clampPercent(breakdown.fillPercent);
+        const state = getThresholdState(fillPercent);
+
+        fillValue.textContent = `${Math.round(fillPercent)}%`;
+        fillBar.style.width = `${fillPercent}%`;
+        fillBar.className = `bar-fill ${state}`;
+        fillBar.parentElement.setAttribute('aria-valuenow', String(Math.round(fillPercent)));
+        renderThresholdMessage(fillPercent);
+        renderCategories(breakdown);
+
+        totalLine.textContent = `Total: ${formatTokens(breakdown.totalTokens)} / ${formatTokens(
+          breakdown.effectiveWindow
+        )} effective tokens`;
+        actions.classList.toggle('hidden', fillPercent < 60);
+      }
+
+      function renderThresholdMessage(fillPercent) {
+        thresholdMessage.classList.remove('danger');
+
+        if (fillPercent >= 60) {
+          thresholdMessage.textContent = 'Time to compact or start a new chat.';
+          thresholdMessage.classList.remove('hidden');
+          thresholdMessage.classList.add('danger');
+          return;
+        }
+
+        if (fillPercent >= 40) {
+          thresholdMessage.textContent =
+            'Quality may begin to suffer - especially for complex coding and reasoning tasks.';
+          thresholdMessage.classList.remove('hidden');
+          return;
+        }
+
+        thresholdMessage.classList.add('hidden');
+      }
+
+      function renderCategories(breakdown) {
+        categoryList.replaceChildren(
+          ...categoryLabels.map(([key, label]) =>
+            createMetricRow(label, breakdown.categories[key] ?? 0, breakdown.totalTokens)
+          )
+        );
+      }
+
+      function renderHistory(history) {
+        if (!history || !history.hasData) {
+          historyList.replaceChildren(createMutedText('No historical usage data found.'));
+          return;
+        }
+
+        historyList.replaceChildren(
+          ...historyLabels.map(([key, label]) => createMetricRow(label, history[key] ?? 0, 100, true))
+        );
+      }
+
+      function createMetricRow(label, value, max, valueIsPercent = false) {
+        const row = document.createElement('div');
+        row.className = valueIsPercent ? 'metric-row' : 'category-row';
+
+        const labelElement = document.createElement('span');
+        labelElement.className = 'label';
+        labelElement.textContent = label;
+
+        const bar = document.createElement('div');
+        bar.className = 'bar';
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-label', label);
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', '100');
+
+        const percent = valueIsPercent ? clampPercent(value) : getSharePercent(value, max);
+        const fill = document.createElement('div');
+        fill.className = valueIsPercent ? `bar-fill ${getThresholdState(percent)}` : 'bar-fill';
+        fill.style.width = `${percent}%`;
+        bar.setAttribute('aria-valuenow', String(Math.round(percent)));
+        bar.append(fill);
+
+        const valueElement = document.createElement('span');
+        valueElement.className = 'value';
+        valueElement.textContent = valueIsPercent
+          ? `${Math.round(percent)}%${percent >= 60 ? ' Getting high' : ''}`
+          : `${formatTokens(value)} tokens ${Math.round(percent)}%`;
+
+        row.append(labelElement, bar, valueElement);
+        return row;
+      }
+
+      function createMutedText(text) {
+        const paragraph = document.createElement('p');
+        paragraph.className = 'muted status';
+        paragraph.textContent = text;
+        return paragraph;
+      }
+
+      function getSharePercent(value, max) {
+        if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) {
+          return 0;
+        }
+
+        return clampPercent((value / max) * 100);
+      }
+
+      function getThresholdState(fillPercent) {
+        if (fillPercent >= 60) {
+          return 'danger';
+        }
+
+        if (fillPercent >= 40) {
+          return 'warning';
+        }
+
+        return 'good';
+      }
+
+      function clampPercent(value) {
+        if (!Number.isFinite(value)) {
+          return 0;
+        }
+
+        return Math.min(Math.max(value, 0), 100);
+      }
+
+      function formatTokens(value) {
+        if (!Number.isFinite(value)) {
+          return '0';
+        }
+
+        return new Intl.NumberFormat().format(Math.round(value));
+      }
     </script>
   </body>
 </html>
