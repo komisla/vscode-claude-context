@@ -34,3 +34,14 @@ test('dashboard relies on VS Code message passing instead of webview storage', a
   assert.match(html, /vscode\.postMessage/);
   assert.match(html, /window\.addEventListener\('message'/);
 });
+
+test('dashboard declares a strict CSP with a script nonce placeholder', async () => {
+  const html = await readDashboardHtml();
+
+  assert.match(html, /http-equiv="Content-Security-Policy"/);
+  assert.match(html, /default-src 'none'/);
+  assert.match(html, /style-src 'unsafe-inline'/);
+  assert.match(html, /script-src 'nonce-\{\{nonce\}\}'/);
+  assert.match(html, /<script nonce="\{\{nonce\}\}">/);
+  assert.equal(html.includes("script-src 'unsafe-inline'"), false);
+});
