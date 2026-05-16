@@ -40,7 +40,8 @@ export class BreakdownPanel {
       return;
     }
 
-    const breakdown = await reconstructContextBreakdown(source.getLatest());
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const breakdown = await reconstructContextBreakdown(source.getLatest(), { workspaceRoot });
     await panel.webview.postMessage({
       type: 'contextBreakdown',
       payload: breakdown
