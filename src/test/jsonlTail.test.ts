@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp } from 'fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { setTimeout as delay } from 'timers/promises';
 import { tmpdir } from 'os';
 import path from 'path';
+import type { ContextUpdate } from '../dataSource';
 import { JsonlTailDataSource, slugify } from '../dataSource/jsonlTail';
 
 class MockEventEmitter<T> {
@@ -206,6 +207,127 @@ test('watchProjectDir keeps the latest watcher when an older setup resolves late
   }
 });
 
+test('JsonlTailDataSource emits updates when the active jsonl file is appended', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-append-');
+  const originalEnv = snapshotProcessEnv();
+
+  applyClaudeHome(fixture.homeDir);
+  await writeFile(
+    fixture.sessionPath,
+    `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`
+  );
+  const dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]));
+
+  try {
+    const initialUpdate = await waitForUpdate(dataSource, (update) => update.totalTokens === 100);
+    assert.equal(initialUpdate.sessionPath, fixture.sessionPath);
+
+    const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 250);
+    await appendFile(
+      fixture.sessionPath,
+      `${JSON.stringify(makeAssistantLine('2026-05-16T11:01:00Z', 250))}\n`
+    );
+    await (dataSource as unknown as { readNewBytes: (filePath: string) => Promise<void> }).readNewBytes(
+      fixture.sessionPath
+    );
+
+    const update = await nextUpdate;
+    assert.equal(update.totalTokens, 250);
+    assert.ok(update.fillPercent !== undefined);
+    assert.ok((update.fillPercent ?? 0) > (initialUpdate.fillPercent ?? 0));
+    assert.equal(update.sessionPath, fixture.sessionPath);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource preserves CRLF boundaries across file chunks', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-crlf-');
+  const originalEnv = snapshotProcessEnv();
+
+  applyClaudeHome(fixture.homeDir);
+  await writeFile(fixture.sessionPath, '');
+  const dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]));
+
+  try {
+    await delay(25);
+
+    const mutable = dataSource as unknown as {
+      readNewBytes: (filePath: string) => Promise<void>;
+    };
+
+    await writeFile(
+      fixture.sessionPath,
+      `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 10))}\r`
+    );
+    await mutable.readNewBytes(fixture.sessionPath);
+    assert.equal(dataSource.getLatest().error, 'Claude Code session not found');
+
+    await appendFile(
+      fixture.sessionPath,
+      `\n${JSON.stringify(makeAssistantLine('2026-05-16T11:01:00Z', 20))}\r\n`
+    );
+    await mutable.readNewBytes(fixture.sessionPath);
+
+    assert.equal(dataSource.getLatest().totalTokens, 20);
+    assert.equal(dataSource.getLatest().sessionPath, fixture.sessionPath);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource only runs one refresh core at a time', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+
+  try {
+    let activeRefreshes = 0;
+    let maxConcurrentRefreshes = 0;
+    let refreshCalls = 0;
+    let releaseRefresh: (() => void) | undefined;
+
+    const gate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+
+    const mutable = dataSource as unknown as {
+      refreshActiveSession: () => Promise<void>;
+      refreshActiveSessionCore: () => Promise<void>;
+      refreshing?: Promise<void>;
+    };
+
+    mutable.refreshActiveSessionCore = async () => {
+      refreshCalls += 1;
+      activeRefreshes += 1;
+      maxConcurrentRefreshes = Math.max(maxConcurrentRefreshes, activeRefreshes);
+
+      try {
+        await gate;
+      } finally {
+        activeRefreshes -= 1;
+      }
+    };
+
+    mutable.refreshActiveSession();
+    const inFlight = mutable.refreshing;
+    const second = mutable.refreshActiveSession();
+
+    assert.equal(mutable.refreshing, inFlight);
+    assert.equal(refreshCalls, 1);
+    assert.equal(maxConcurrentRefreshes, 1);
+
+    releaseRefresh?.();
+    await inFlight;
+    await second;
+  } finally {
+    dataSource.dispose();
+  }
+});
+
 function makeAssistantLine(timestamp: string, inputTokens: number): unknown {
   return {
     timestamp,
@@ -219,5 +341,83 @@ function makeAssistantLine(timestamp: string, inputTokens: number): unknown {
         output_tokens: 0
       }
     }
+  };
+}
+
+async function waitForUpdate(
+  dataSource: JsonlTailDataSource,
+  predicate: (update: ContextUpdate) => boolean,
+  timeoutMs = 5_000
+): Promise<ContextUpdate> {
+  return await new Promise<ContextUpdate>((resolve, reject) => {
+    let disposable: { dispose(): void } | undefined;
+    const timeout = setTimeout(() => {
+      disposable?.dispose();
+      reject(new Error('Timed out waiting for JsonlTailDataSource update'));
+    }, timeoutMs);
+
+    disposable = dataSource.onDidChange((update) => {
+      if (!predicate(update)) {
+        return;
+      }
+
+      clearTimeout(timeout);
+      disposable?.dispose();
+      resolve(update);
+    });
+  });
+}
+
+function snapshotProcessEnv(): NodeJS.ProcessEnv {
+  return {
+    HOME: process.env.HOME,
+    HOMEDRIVE: process.env.HOMEDRIVE,
+    HOMEPATH: process.env.HOMEPATH,
+    USERPROFILE: process.env.USERPROFILE
+  };
+}
+
+function applyClaudeHome(homeDir: string): void {
+  process.env.HOME = homeDir;
+  process.env.HOMEDRIVE = homeDir.slice(0, 2);
+  process.env.HOMEPATH = homeDir.slice(2);
+  process.env.USERPROFILE = homeDir;
+}
+
+function restoreProcessEnv(originalEnv: NodeJS.ProcessEnv): void {
+  process.env.HOME = originalEnv.HOME;
+  process.env.HOMEDRIVE = originalEnv.HOMEDRIVE;
+  process.env.HOMEPATH = originalEnv.HOMEPATH;
+  process.env.USERPROFILE = originalEnv.USERPROFILE;
+}
+
+async function createClaudeFixture(prefix: string): Promise<{
+  readonly root: string;
+  readonly homeDir: string;
+  readonly workspaceRoot: string;
+  readonly projectRoot: string;
+  readonly sessionPath: string;
+}> {
+  const root = await mkdtemp(path.join(tmpdir(), prefix));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const ideRoot = path.join(claudeRoot, 'ide');
+  const workspaceRoot = path.join(root, 'workspace');
+  const projectRoot = path.join(claudeRoot, 'projects', slugify(workspaceRoot));
+  const sessionPath = path.join(projectRoot, 'session.jsonl');
+
+  await mkdir(ideRoot, { recursive: true });
+  await mkdir(projectRoot, { recursive: true });
+  await writeFile(
+    path.join(ideRoot, 'active.lock'),
+    JSON.stringify({ workspaceFolders: [workspaceRoot] })
+  );
+
+  return {
+    root,
+    homeDir,
+    workspaceRoot,
+    projectRoot,
+    sessionPath
   };
 }

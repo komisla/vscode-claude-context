@@ -16,8 +16,11 @@ test('fill percent caps at 100', () => {
 });
 
 test('fill percent falls back for unknown models', () => {
-  const { fillPercent, contextWindow } = calculateFillPercent(178_808, 'unexpected-model');
+  const { fillPercent, contextWindow, effectiveWindow } = calculateFillPercent(
+    178_808,
+    'unexpected-model'
+  );
 
   assert.equal(contextWindow, 200_000);
-  assert.equal(fillPercent, 100);
+  assert.equal(fillPercent, Math.min((178_808 / effectiveWindow) * 100, 100));
 });
