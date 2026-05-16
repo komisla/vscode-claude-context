@@ -5,6 +5,7 @@ export interface ContextUpdate {
   readonly fillPercent?: number;
   readonly totalTokens?: number;
   readonly contextWindow?: number;
+  readonly effectiveWindow?: number;
   readonly model?: string;
   readonly sessionPath?: string;
   readonly error?: string;
