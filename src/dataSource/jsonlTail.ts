@@ -399,30 +399,32 @@ export class JsonlTailDataSource implements ContextDataSource {
     }
 
     const cached = this.ideDirectoryCache;
+    let lockPaths: string[];
 
     if (cached !== undefined && cached.mtimeMs === stats.mtimeMs) {
-      return cached.lockPaths;
+      lockPaths = cached.lockPaths;
+    } else {
+      let entries: fs.Dirent[];
+
+      try {
+        entries = await fsp.readdir(ideRoot, { withFileTypes: true });
+      } catch {
+        this.ideDirectoryCache = undefined;
+        return [];
+      }
+
+      lockPaths = entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.lock'))
+        .map((entry) => path.join(ideRoot, entry.name));
+
+      this.ideDirectoryCache = {
+        mtimeMs: stats.mtimeMs,
+        lockPaths
+      };
     }
-
-    let entries: fs.Dirent[];
-
-    try {
-      entries = await fsp.readdir(ideRoot, { withFileTypes: true });
-    } catch {
-      this.ideDirectoryCache = undefined;
-      return [];
-    }
-
-    const lockPaths = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.lock'))
-      .map((entry) => path.join(ideRoot, entry.name));
-
-    this.ideDirectoryCache = {
-      mtimeMs: stats.mtimeMs,
-      lockPaths
-    };
 
     const lockPathSet = new Set(lockPaths);
+
     for (const cachedPath of this.lockCache.keys()) {
       if (!lockPathSet.has(cachedPath)) {
         this.lockCache.delete(cachedPath);

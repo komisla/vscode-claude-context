@@ -136,6 +136,52 @@ test('findActiveSession reads lock files in parallel and caches unchanged lock f
   }
 });
 
+test('readLockFiles prunes stale cache entries on cache hit', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-prune-'));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const ideRoot = path.join(claudeRoot, 'ide');
+
+  await mkdir(ideRoot, { recursive: true });
+
+  const originalEnv = snapshotProcessEnv();
+  applyClaudeHome(homeDir);
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+
+  try {
+    await delay(25);
+
+    const stats = await fsp.stat(ideRoot);
+    const activeLockPath = path.join(ideRoot, 'active.lock');
+    const staleLockPath = path.join(ideRoot, 'stale.lock');
+    const mutable = dataSource as unknown as {
+      ideDirectoryCache: { readonly mtimeMs: number; readonly lockPaths: string[] } | undefined;
+      lockCache: Map<string, { readonly workspaceFolders: readonly string[] }>;
+      readLockFiles: () => Promise<string[]>;
+    };
+
+    mutable.ideDirectoryCache = {
+      mtimeMs: stats.mtimeMs,
+      lockPaths: [activeLockPath]
+    };
+    mutable.lockCache = new Map([
+      [activeLockPath, { workspaceFolders: [activeLockPath] }],
+      [staleLockPath, { workspaceFolders: [staleLockPath] }]
+    ]);
+
+    const lockPaths = await mutable.readLockFiles();
+
+    assert.deepEqual(lockPaths, [activeLockPath]);
+    assert.equal(mutable.lockCache.has(activeLockPath), true);
+    assert.equal(mutable.lockCache.has(staleLockPath), false);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('watchProjectDir keeps the latest watcher when an older setup resolves late', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-watch-'));
   const homeDir = path.join(root, 'home');
