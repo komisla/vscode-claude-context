@@ -514,6 +514,12 @@ export class JsonlTailDataSource implements ContextDataSource {
       return;
     }
 
+    if (!this.offsets.has(filePath)) {
+      // Seed the offset at EOF on first encounter so we only read future appends.
+      this.offsets.set(filePath, stats.size);
+      return;
+    }
+
     const previousOffset = this.offsets.get(filePath) ?? 0;
     const offset = stats.size < previousOffset ? 0 : previousOffset;
 
