@@ -212,15 +212,51 @@ test('JsonlTailDataSource emits updates when the active jsonl file is appended',
   const originalEnv = snapshotProcessEnv();
 
   applyClaudeHome(fixture.homeDir);
-  await writeFile(
-    fixture.sessionPath,
-    `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`
-  );
+  await writeFile(fixture.sessionPath, '');
   const dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]));
 
   try {
-    const initialUpdate = await waitForUpdate(dataSource, (update) => update.totalTokens === 100);
-    assert.equal(initialUpdate.sessionPath, fixture.sessionPath);
+    await delay(50);
+    assert.equal(dataSource.getLatest().error, 'Claude Code session not found');
+
+    const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 100);
+    await appendFile(
+      fixture.sessionPath,
+      `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`
+    );
+    await (dataSource as unknown as { readNewBytes: (filePath: string) => Promise<void> }).readNewBytes(
+      fixture.sessionPath
+    );
+
+      const update = await nextUpdate;
+      assert.equal(update.totalTokens, 100);
+      assert.ok(update.fillPercent !== undefined);
+      assert.equal(update.sessionPath, fixture.sessionPath);
+      assert.ok((update.fillPercent ?? 0) > 0);
+    } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource seeds the offset on first encounter of an existing jsonl file', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-offset-seed-');
+  const originalEnv = snapshotProcessEnv();
+
+  applyClaudeHome(fixture.homeDir);
+  await writeFile(
+    fixture.sessionPath,
+    Array.from({ length: 100 }, () =>
+      JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 1))
+    ).join('\n') + '\n'
+  );
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]));
+
+  try {
+    await delay(50);
+    assert.equal(dataSource.getLatest().error, 'Claude Code session not found');
 
     const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 250);
     await appendFile(
@@ -233,8 +269,6 @@ test('JsonlTailDataSource emits updates when the active jsonl file is appended',
 
     const update = await nextUpdate;
     assert.equal(update.totalTokens, 250);
-    assert.ok(update.fillPercent !== undefined);
-    assert.ok((update.fillPercent ?? 0) > (initialUpdate.fillPercent ?? 0));
     assert.equal(update.sessionPath, fixture.sessionPath);
   } finally {
     dataSource.dispose();
