@@ -1,4 +1,5 @@
-import { promises as fsp } from 'fs';
+import { createReadStream, promises as fsp } from 'fs';
+import { createInterface } from 'readline';
 import * as os from 'os';
 import * as path from 'path';
 import { getUsageTotal, isAssistantTurn } from './jsonlTail';
@@ -118,20 +119,25 @@ export class HistoricalUsageReader {
       return;
     }
 
-    let raw: string;
+    const minTimestamp = nowMs - SEVEN_DAYS_MS;
+    const entries: TokenEntry[] = [];
 
     try {
-      raw = await fsp.readFile(jsonlPath, 'utf8');
+      const rl = createInterface({
+        input: createReadStream(jsonlPath, 'utf8'),
+        crlfDelay: Infinity
+      });
+
+      for await (const lineText of rl) {
+        const entry = parseHistoricalUsageLine(lineText);
+        if (entry !== undefined && entry.timestampMs >= minTimestamp) {
+          entries.push(entry);
+        }
+      }
     } catch {
       this.cache.delete(jsonlPath);
       return;
     }
-
-    const minTimestamp = nowMs - SEVEN_DAYS_MS;
-    const entries = raw
-      .split(/\r?\n/)
-      .map(parseHistoricalUsageLine)
-      .filter((entry): entry is TokenEntry => entry !== undefined && entry.timestampMs >= minTimestamp);
 
     this.cache.set(jsonlPath, {
       mtimeMs: stats.mtimeMs,
