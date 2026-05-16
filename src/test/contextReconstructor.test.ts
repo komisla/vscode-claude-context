@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { cwd } from 'node:process';
 import path from 'node:path';
 import {
   CC_BASE_SYSTEM_PROMPT_TOKENS,
@@ -25,24 +26,40 @@ test('counts workspace, parent, global CLAUDE.md files and one-level imports', a
     const homeDir = path.join(root, 'home');
     const globalClaudeDir = path.join(homeDir, '.claude');
     const workspaceRoot = path.join(root, 'repo', 'app');
+    const absoluteImportDir = path.join(cwd(), `.test-abs-${path.basename(root)}`);
+    const absoluteImportPath = path.join(absoluteImportDir, 'abs-import.md');
+    const absoluteImportRef = absoluteImportPath
+      .slice(path.parse(absoluteImportPath).root.length)
+      .replace(/\\/g, '/');
     await mkdir(globalClaudeDir, { recursive: true });
     await mkdir(workspaceRoot, { recursive: true });
+    await mkdir(absoluteImportDir, { recursive: true });
 
     const globalClaude = 'global rules @global-import.md';
     const globalImport = 'global imported';
-    const parentClaude = 'parent rules @parent-import.md';
+    const parentClaude = 'parent rules @parent-import.md\nRepo @long-kudo/vscode-claude-status';
     const parentImport = 'parent imported';
-    const workspaceClaude = 'workspace rules @./workspace-import.md @missing.md';
+    const workspaceClaude = `workspace rules @./workspace-import.md @../parent-import.md @~/home-import.md @/${absoluteImportRef} @missing.md\nEmail slavik@korbinian.eu\nPackage @types/node`;
     const workspaceImport = 'workspace imported @nested.md';
+    const homeImport = 'home imported';
+    const absoluteImport = 'absolute imported';
     const nestedImport = 'nested should not be followed';
+    const repoReference = 'repo reference should not be imported';
+    const npmPackage = 'package should not be imported';
 
     await writeFile(path.join(globalClaudeDir, 'CLAUDE.md'), globalClaude);
     await writeFile(path.join(globalClaudeDir, 'global-import.md'), globalImport);
     await writeFile(path.join(root, 'repo', 'CLAUDE.md'), parentClaude);
     await writeFile(path.join(root, 'repo', 'parent-import.md'), parentImport);
+    await writeFile(path.join(homeDir, 'home-import.md'), homeImport);
+    await writeFile(absoluteImportPath, absoluteImport);
     await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
     await writeFile(path.join(workspaceRoot, 'workspace-import.md'), workspaceImport);
     await writeFile(path.join(workspaceRoot, 'nested.md'), nestedImport);
+    await mkdir(path.join(root, 'repo', 'long-kudo'), { recursive: true });
+    await writeFile(path.join(root, 'repo', 'long-kudo', 'vscode-claude-status'), repoReference);
+    await mkdir(path.join(workspaceRoot, 'types'), { recursive: true });
+    await writeFile(path.join(workspaceRoot, 'types', 'node'), npmPackage);
 
     const expected = [
       globalClaude,
@@ -50,12 +67,19 @@ test('counts workspace, parent, global CLAUDE.md files and one-level imports', a
       parentClaude,
       parentImport,
       workspaceClaude,
+      parentImport,
+      homeImport,
+      absoluteImport,
       workspaceImport
     ].reduce((sum, content) => sum + countTokens(content), 0);
 
     assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), expected);
   } finally {
     await rm(root, { recursive: true, force: true });
+    await rm(path.join(cwd(), `.test-abs-${path.basename(root)}`), {
+      recursive: true,
+      force: true
+    });
   }
 });
 
@@ -99,10 +123,19 @@ test('replays deferred tool deltas and counts MCP tools separately', async () =>
         readdedNames: ['Read']
       }
     };
+    const sidechainDelta = {
+      type: 'attachment',
+      isSidechain: true,
+      attachment: {
+        type: 'deferred_tools_delta',
+        addedNames: ['Write']
+      }
+    };
 
     await writeFile(sessionPath, [
       JSON.stringify(firstDelta),
       JSON.stringify({ type: 'message' }),
+      JSON.stringify(sidechainDelta),
       JSON.stringify(secondDelta)
     ].join('\n'));
 

@@ -218,6 +218,10 @@ export function replayDeferredTools(jsonl: string): ReadonlySet<string> {
       continue;
     }
 
+    if (isRecord(line) && line.isSidechain === true) {
+      continue;
+    }
+
     if (!isDeferredToolsDelta(line)) {
       continue;
     }
@@ -309,7 +313,7 @@ async function countImportedClaudeMdTokens(
 
 function extractAtImports(content: string): readonly string[] {
   const imports: string[] = [];
-  const regex = /(?:^|\s)@([^\s]+)/g;
+  const regex = /(?:^|\s)@((?:\.{1,2}\/|~\/|\/)[^\s),;:!?]+|[^\s@/),;:!?]+\.md)/g;
   let match = regex.exec(content);
 
   while (match !== null) {
