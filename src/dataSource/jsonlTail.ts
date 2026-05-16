@@ -88,6 +88,10 @@ export function getModelLimits(model: string | undefined): ModelLimits {
     return MODEL_TABLE[normalizedModel];
   }
 
+  if (normalizedModel?.startsWith('claude-opus-')) {
+    return { contextWindow: 200_000, maxOutputTokens: 32_000 };
+  }
+
   return DEFAULT_MODEL_LIMITS;
 }
 
