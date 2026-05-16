@@ -255,6 +255,8 @@
           <span class="badge">± rough estimate</span>
         </div>
 
+        <p id="drift-warning" class="notice hidden"></p>
+
         <div id="actions" class="actions hidden">
           <button id="copy-compact" type="button">Copy /compact</button>
           <a id="start-new-chat" href="#">Start new chat</a>
@@ -333,6 +335,7 @@
       const thresholdMessage = document.getElementById('threshold-message');
       const categoryList = document.getElementById('category-list');
       const totalLine = document.getElementById('total-line');
+      const driftWarning = document.getElementById('drift-warning');
       const actions = document.getElementById('actions');
       const copyCompact = document.getElementById('copy-compact');
       const startNewChat = document.getElementById('start-new-chat');
@@ -394,6 +397,7 @@
         fillBar.parentElement.setAttribute('aria-valuenow', String(Math.round(fillPercent)));
         renderThresholdMessage(fillPercent);
         renderCategories(breakdown);
+        renderDriftWarning(breakdown);
 
         totalLine.textContent = `Total: ${formatTokens(breakdown.totalTokens)} / ${formatTokens(
           breakdown.effectiveWindow
@@ -427,6 +431,18 @@
             createMetricRow(label, breakdown.categories[key] ?? 0, breakdown.totalTokens)
           )
         );
+      }
+
+      function renderDriftWarning(breakdown) {
+        if (!breakdown.systemPromptDriftWarning) {
+          driftWarning.classList.add('hidden');
+          driftWarning.textContent = '';
+          return;
+        }
+
+        driftWarning.textContent =
+          'Estimates may be inaccurate - system prompt constants are out of date.';
+        driftWarning.classList.remove('hidden');
       }
 
       function renderHistory(history) {

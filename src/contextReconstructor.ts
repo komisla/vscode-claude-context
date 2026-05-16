@@ -22,6 +22,7 @@ export interface ContextBreakdown {
   readonly effectiveWindow: number;
   readonly fillPercent: number;
   readonly categories: ContextBreakdownCategories;
+  readonly systemPromptDriftWarning: boolean;
   readonly isEstimate: true;
   readonly measuredAt: Date;
 }
@@ -46,14 +47,16 @@ interface DeferredToolsDeltaLine {
   };
 }
 
-let cache: CacheEntry | undefined;
+const cache = new Map<string, CacheEntry>();
+const inFlight = new Map<string, Promise<ContextBreakdown>>();
 
 export function countTokens(text: string): number {
   return encode(text).length;
 }
 
 export function clearContextBreakdownCache(): void {
-  cache = undefined;
+  cache.clear();
+  inFlight.clear();
 }
 
 export async function reconstructContextBreakdown(
@@ -62,12 +65,14 @@ export async function reconstructContextBreakdown(
 ): Promise<ContextBreakdown> {
   const now = options.now?.() ?? Date.now();
   const key = getCacheKey(source, options.workspaceRoot, options.homeDir);
+  const totalTokens = source.totalTokens;
+  const cached = cache.get(key);
 
-  if (cache !== undefined && cache.key === key && cache.expiresAt > now) {
-    return cache.value;
+  if (cached !== undefined && cached.expiresAt > now) {
+    return cached.value;
   }
 
-  if (source.totalTokens === undefined) {
+  if (totalTokens === undefined) {
     const emptyBreakdown = createBreakdown(source, {
       systemPrompt: 0,
       claudeMd: 0,
@@ -76,48 +81,72 @@ export async function reconstructContextBreakdown(
       conversation: 0
     }, now);
 
-    cache = {
+    cache.set(key, {
       key,
       expiresAt: now + BREAKDOWN_CACHE_MS,
       value: emptyBreakdown
-    };
+    });
 
     return emptyBreakdown;
   }
 
-  const totalTokens = source.totalTokens;
-  const systemPrompt = CC_BASE_SYSTEM_PROMPT_TOKENS;
-  const claudeMd = await countClaudeMdTokens(options.workspaceRoot, options.homeDir);
-  const memory = await countMemoryTokens(source.sessionPath);
-  const tools = await estimateToolTokens(source.sessionPath);
-  const conversation = Math.max(0, totalTokens - systemPrompt - claudeMd - memory - tools);
-  const breakdown = createBreakdown(source, {
-    systemPrompt,
-    claudeMd,
-    memory,
-    tools,
-    conversation
-  }, now);
+  const pending = inFlight.get(key);
 
-  cache = {
-    key,
-    expiresAt: now + BREAKDOWN_CACHE_MS,
-    value: breakdown
-  };
+  if (pending !== undefined) {
+    return pending;
+  }
 
-  return breakdown;
+  const promise = (async () => {
+    const systemPrompt = CC_BASE_SYSTEM_PROMPT_TOKENS;
+    const claudeMd = await countClaudeMdTokens(options.workspaceRoot, options.homeDir);
+    const memory = await countMemoryTokens(source.sessionPath);
+    const tools = await estimateToolTokens(source.sessionPath);
+    const conversation = Math.max(0, totalTokens - systemPrompt - claudeMd - memory - tools);
+    const breakdown = createBreakdown(
+      source,
+      {
+        systemPrompt,
+        claudeMd,
+        memory,
+        tools,
+        conversation
+      },
+      now,
+      conversation === 0 && totalTokens > 0
+    );
+
+    cache.set(key, {
+      key,
+      expiresAt: now + BREAKDOWN_CACHE_MS,
+      value: breakdown
+    });
+
+    return breakdown;
+  })();
+
+  inFlight.set(key, promise);
+
+  try {
+    return await promise;
+  } finally {
+    if (inFlight.get(key) === promise) {
+      inFlight.delete(key);
+    }
+  }
 }
 
 function createBreakdown(
   source: ContextUpdate,
   categories: ContextBreakdownCategories,
-  measuredAtMs: number
+  measuredAtMs: number,
+  systemPromptDriftWarning = false
 ): ContextBreakdown {
   return {
     totalTokens: source.totalTokens ?? 0,
     effectiveWindow: source.effectiveWindow ?? source.contextWindow ?? 0,
     fillPercent: source.fillPercent ?? 0,
     categories,
+    systemPromptDriftWarning,
     isEstimate: true,
     measuredAt: new Date(measuredAtMs)
   };
@@ -147,7 +176,12 @@ export async function countClaudeMdTokens(
     }
 
     total += countTokens(content);
-    total += await countImportedClaudeMdTokens(content, filePath, homeDir);
+    total += await countImportedClaudeMdTokens(
+      content,
+      filePath,
+      homeDir,
+      new Set([path.resolve(filePath)])
+    );
   }
 
   return total;
@@ -292,7 +326,8 @@ function getClaudeMdPathsUpTree(workspaceRoot: string): readonly string[] {
 async function countImportedClaudeMdTokens(
   content: string,
   sourcePath: string,
-  homeDir: string
+  homeDir: string,
+  visited: Set<string>
 ): Promise<number> {
   let total = 0;
   const sourceDir = path.dirname(sourcePath);
@@ -304,8 +339,26 @@ async function countImportedClaudeMdTokens(
       continue;
     }
 
-    const importedContent = await readTextFile(resolvedPath);
-    total += importedContent === undefined ? 0 : countTokens(importedContent);
+    const normalizedPath = path.resolve(resolvedPath);
+
+    if (visited.has(normalizedPath)) {
+      continue;
+    }
+
+    const importedContent = await readTextFile(normalizedPath);
+
+    if (importedContent === undefined) {
+      continue;
+    }
+
+    visited.add(normalizedPath);
+    total += countTokens(importedContent);
+    total += await countImportedClaudeMdTokens(
+      importedContent,
+      normalizedPath,
+      homeDir,
+      visited
+    );
   }
 
   return total;
@@ -313,13 +366,21 @@ async function countImportedClaudeMdTokens(
 
 function extractAtImports(content: string): readonly string[] {
   const imports: string[] = [];
-  const regex = /(?:^|\s)@((?:\.{1,2}\/|~\/|\/)[^\s),;:!?]+|[^\s@/),;:!?]+\.md)/g;
+  const regex = /(?:^|\s)@([^\n@]+)/g;
   let match = regex.exec(content);
 
   while (match !== null) {
     const importPath = cleanImportPath(match[1]);
 
-    if (importPath !== '' && !importPath.includes('://')) {
+    if (
+      importPath !== '' &&
+      !importPath.includes('://') &&
+      (importPath.startsWith('./') ||
+        importPath.startsWith('../') ||
+        importPath.startsWith('~/') ||
+        importPath.startsWith('/') ||
+        importPath.endsWith('.md'))
+    ) {
       imports.push(importPath);
     }
 
@@ -330,7 +391,7 @@ function extractAtImports(content: string): readonly string[] {
 }
 
 function cleanImportPath(importPath: string): string {
-  return importPath.replace(/[),.;:!?]+$/g, '');
+  return importPath.trim().replace(/[),.;:!?]+$/g, '');
 }
 
 function resolveImportPath(
