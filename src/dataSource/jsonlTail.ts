@@ -403,14 +403,14 @@ export class JsonlTailDataSource implements ContextDataSource {
       .filter((entry) => entry.isFile() && entry.name.endsWith('.lock'))
       .map((entry) => path.join(ideRoot, entry.name));
 
-    this.lockCache.clear();
     this.ideDirectoryCache = {
       mtimeMs: stats.mtimeMs,
       lockPaths
     };
 
+    const lockPathSet = new Set(lockPaths);
     for (const cachedPath of this.lockCache.keys()) {
-      if (!lockPaths.includes(cachedPath)) {
+      if (!lockPathSet.has(cachedPath)) {
         this.lockCache.delete(cachedPath);
       }
     }
