@@ -14,17 +14,24 @@ export interface HistoricalUsageBudgets {
   readonly budget7d: number;
 }
 
+export interface ModelUsage {
+  readonly tokens5h: number;
+  readonly tokens7d: number;
+}
+
 export interface HistoricalUsageSnapshot {
   readonly tokens5h: number;
   readonly tokens7d: number;
   readonly pct5h: number;
   readonly pct7d: number;
   readonly hasData: boolean;
+  readonly byModel: ReadonlyMap<string, ModelUsage>;
 }
 
 interface TokenEntry {
   readonly timestampMs: number;
   readonly tokens: number;
+  readonly model: string;
 }
 
 interface CachedFile {
@@ -67,6 +74,7 @@ export class HistoricalUsageReader {
     let tokens5h = 0;
     let tokens7d = 0;
     let hasData = false;
+    const byModel = new Map<string, { tokens5h: number; tokens7d: number }>();
 
     for (const cached of this.cache.values()) {
       for (const entry of cached.entries) {
@@ -74,10 +82,12 @@ export class HistoricalUsageReader {
 
         if (entry.timestampMs >= min7d) {
           tokens7d += entry.tokens;
+          getModelUsage(byModel, entry.model).tokens7d += entry.tokens;
         }
 
         if (entry.timestampMs >= min5h) {
           tokens5h += entry.tokens;
+          getModelUsage(byModel, entry.model).tokens5h += entry.tokens;
         }
       }
     }
@@ -87,7 +97,8 @@ export class HistoricalUsageReader {
       tokens7d,
       pct5h: calculateBudgetPercent(tokens5h, budgets.budget5h),
       pct7d: calculateBudgetPercent(tokens7d, budgets.budget7d),
-      hasData
+      hasData,
+      byModel
     };
   }
 
@@ -183,8 +194,28 @@ export function parseHistoricalUsageLine(lineText: string): TokenEntry | undefin
 
   return {
     timestampMs,
-    tokens: getUsageTotal(line.message.usage)
+    tokens: getUsageTotal(line.message.usage),
+    model: normalizeModel(line.message.model)
   };
+}
+
+function normalizeModel(model: unknown): string {
+  return typeof model === 'string' && model.trim() !== '' ? model : 'unknown';
+}
+
+function getModelUsage(
+  byModel: Map<string, { tokens5h: number; tokens7d: number }>,
+  model: string
+): { tokens5h: number; tokens7d: number } {
+  const existing = byModel.get(model);
+
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const usage = { tokens5h: 0, tokens7d: 0 };
+  byModel.set(model, usage);
+  return usage;
 }
 
 function calculateBudgetPercent(tokens: number, budget: number): number {
