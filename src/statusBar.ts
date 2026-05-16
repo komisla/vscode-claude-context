@@ -159,7 +159,9 @@ export class StatusBarController implements vscode.Disposable {
   ): vscode.MarkdownString {
     const totalTokens = this.latest?.totalTokens ?? 0;
     const effectiveWindow = this.latest?.effectiveWindow ?? this.latest?.contextWindow ?? 0;
-    const tooltip = new vscode.MarkdownString(
+    const tooltip = new vscode.MarkdownString(undefined, true);
+    tooltip.isTrusted = false;
+    tooltip.appendText(
       buildTooltipText({
         fillPercent,
         totalTokens,
@@ -172,10 +174,8 @@ export class StatusBarController implements vscode.Disposable {
                 pct7d: history.pct7d,
                 byModel: getModelUsageRows(history)
               }
-      }),
-      true
+      })
     );
-    tooltip.isTrusted = false;
     return tooltip;
   }
 }
