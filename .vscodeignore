@@ -1,0 +1,12 @@
+# Files excluded from the published extension package
+.vscode/**
+src/**
+docs/**
+.claude/**
+node_modules/**
+out/test/**
+.gitignore
+.eslintrc*
+*.tsbuildinfo
+tsconfig.json
+webpack.config.js

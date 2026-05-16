@@ -1,0 +1,33 @@
+# Build output
+out/
+dist/
+*.vsix
+
+# Dependencies
+node_modules/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# VS Code test runner
+.vscode-test/
+
+# Personal workspace settings (may contain local paths)
+.vscode/settings.json
+.vscode/*.log
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.eslintcache
