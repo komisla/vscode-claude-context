@@ -2,7 +2,7 @@ import { createReadStream, promises as fsp } from 'fs';
 import { createInterface } from 'readline';
 import * as os from 'os';
 import * as path from 'path';
-import { getUsageTotal, isAssistantTurn } from './jsonlTail';
+import { getUsageTotal, isAssistantTurn, normalizeModel } from './jsonlTail';
 
 export const DEFAULT_BUDGET_5H = 5_000_000;
 export const DEFAULT_BUDGET_7D = 50_000_000;
@@ -211,16 +211,8 @@ export function parseHistoricalUsageLine(lineText: string): TokenEntry | undefin
   return {
     timestampMs,
     tokens: getUsageTotal(line.message.usage),
-    model: normalizeModel(line.message.model, Object.hasOwn(line.message, 'model'))
+    model: normalizeModel(line.message)
   };
-}
-
-function normalizeModel(model: unknown, hasModelField: boolean): string {
-  if (typeof model === 'string' && model.trim() !== '') {
-    return model;
-  }
-
-  return hasModelField ? 'unknown/invalid' : 'unknown/absent';
 }
 
 function getModelUsage(
