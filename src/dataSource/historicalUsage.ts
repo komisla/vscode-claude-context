@@ -43,6 +43,7 @@ interface CachedFile {
 
 export class HistoricalUsageReader {
   private readonly cache = new Map<string, CachedFile>();
+  private inFlight: Promise<HistoricalUsageSnapshot> | undefined;
 
   public constructor(private readonly projectsRoot = path.join(os.homedir(), '.claude', 'projects')) {}
 
@@ -50,20 +51,15 @@ export class HistoricalUsageReader {
     budgets: HistoricalUsageBudgets,
     nowMs = Date.now()
   ): Promise<HistoricalUsageSnapshot> {
-    const jsonlPaths = await this.findJsonlFiles(this.projectsRoot);
-    const existingPaths = new Set(jsonlPaths);
-
-    for (const cachedPath of this.cache.keys()) {
-      if (!existingPaths.has(cachedPath)) {
-        this.cache.delete(cachedPath);
-      }
+    if (this.inFlight !== undefined) {
+      return this.inFlight;
     }
 
-    for (const jsonlPath of jsonlPaths) {
-      await this.refreshFile(jsonlPath, nowMs);
-    }
+    this.inFlight = this.doRefresh(budgets, nowMs).finally(() => {
+      this.inFlight = undefined;
+    });
 
-    return this.calculateSnapshot(budgets, nowMs);
+    return this.inFlight;
   }
 
   public calculateSnapshot(
@@ -146,6 +142,26 @@ export class HistoricalUsageReader {
       size: stats.size,
       entries
     });
+  }
+
+  private async doRefresh(
+    budgets: HistoricalUsageBudgets,
+    nowMs: number
+  ): Promise<HistoricalUsageSnapshot> {
+    const jsonlPaths = await this.findJsonlFiles(this.projectsRoot);
+    const existingPaths = new Set(jsonlPaths);
+
+    for (const cachedPath of this.cache.keys()) {
+      if (!existingPaths.has(cachedPath)) {
+        this.cache.delete(cachedPath);
+      }
+    }
+
+    for (const jsonlPath of jsonlPaths) {
+      await this.refreshFile(jsonlPath, nowMs);
+    }
+
+    return this.calculateSnapshot(budgets, nowMs);
   }
 
   private async findJsonlFiles(dir: string, depth = 0): Promise<string[]> {

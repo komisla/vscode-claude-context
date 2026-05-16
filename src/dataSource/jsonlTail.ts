@@ -27,6 +27,12 @@ interface JsonlCandidate {
   readonly mtimeMs: number;
 }
 
+interface ResolvedLockSession {
+  readonly projectDir: string;
+  readonly jsonlPath: string;
+  readonly mtimeMs: number;
+}
+
 interface CachedLockFile {
   readonly workspaceFolders: string[];
 }
@@ -389,29 +395,33 @@ export class JsonlTailDataSource implements ContextDataSource {
     }
 
     const locks = await this.readLockFiles();
-    const lockResults = await Promise.all(locks.map(async (lockPath) => {
+    const lockResults: Array<ResolvedLockSession | undefined> = [];
+
+    for (const lockPath of locks) {
       const lock = await this.readLock(lockPath);
       const matchedFolder = lock.workspaceFolders.find((folder) =>
         normalizedWorkspaceFolders.includes(normalizeWorkspacePath(folder))
       );
 
       if (matchedFolder === undefined) {
-        return undefined;
+        lockResults.push(undefined);
+        continue;
       }
 
       const projectDir = path.join(this.getClaudeProjectsRoot(), slugify(matchedFolder));
       const jsonl = await this.findNewestJsonl(projectDir);
 
       if (jsonl === undefined) {
-        return undefined;
+        lockResults.push(undefined);
+        continue;
       }
 
-      return {
+      lockResults.push({
         projectDir,
         jsonlPath: jsonl.path,
         mtimeMs: jsonl.mtimeMs
-      };
-    }));
+      });
+    }
 
     let bestSession: ActiveSession | undefined;
     let bestMtimeMs = -1;

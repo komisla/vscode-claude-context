@@ -36,7 +36,7 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
     const parentImport = 'parent imported';
     const workspaceClaude = `workspace rules @./workspace-import.md for details @missing.md @./my-package.md\nLies @issue.md genau\nEmail slavik@korbinian.eu\nPackage @types/node`;
     const workspaceImport = 'workspace imported';
-    const bareImport = 'bare import should be counted';
+    const relativeImport = 'relative import should be counted';
     const falsePositiveImport = 'false positive should not be counted';
     const emailMatch = 'email-like import should not be counted';
     const repoReference = 'repo reference should not be imported';
@@ -48,7 +48,7 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
     await writeFile(path.join(root, 'repo', 'parent-import.md'), parentImport);
     await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
     await writeFile(path.join(workspaceRoot, 'workspace-import.md'), workspaceImport);
-    await writeFile(path.join(workspaceRoot, 'my-package.md'), bareImport);
+    await writeFile(path.join(workspaceRoot, 'my-package.md'), relativeImport);
     await writeFile(path.join(workspaceRoot, 'issue.md'), falsePositiveImport);
     await writeFile(path.join(workspaceRoot, 'korbinian.eu'), emailMatch);
     await mkdir(path.join(root, 'repo', 'long-kudo'), { recursive: true });
@@ -63,10 +63,32 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
       parentImport,
       workspaceClaude,
       workspaceImport,
-      bareImport
+      relativeImport
     ].reduce((sum, content) => sum + countTokens(content), 0);
 
     assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('bare @name.md references are ignored during CLAUDE.md import counting', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-bare-import-'));
+
+  try {
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    await mkdir(workspaceRoot, { recursive: true });
+
+    const workspaceClaude = 'workspace rules @issue.md';
+    const bareImport = 'bare import should not be counted';
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+    await writeFile(path.join(workspaceRoot, 'issue.md'), bareImport);
+
+    assert.equal(
+      await countClaudeMdTokens(workspaceRoot, path.join(root, 'home')),
+      countTokens(workspaceClaude)
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

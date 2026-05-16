@@ -43,7 +43,7 @@ function createMockVscode(workspaceFolders: readonly string[]): typeof import('v
   } as unknown as typeof import('vscode');
 }
 
-test('findActiveSession reads lock files in parallel and caches unchanged lock files', async () => {
+test('findActiveSession reads lock files sequentially and caches unchanged lock files', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-locks-'));
   const homeDir = path.join(root, 'home');
   const claudeRoot = path.join(homeDir, '.claude');
@@ -124,7 +124,7 @@ test('findActiveSession reads lock files in parallel and caches unchanged lock f
     assert.equal(second?.projectDir, projectRoot);
     assert.equal(second?.jsonlPath, path.join(projectRoot, 'session.jsonl'));
     assert.equal(lockReadCount, 2);
-    assert.equal(maxConcurrentLockReads, 2);
+    assert.equal(maxConcurrentLockReads, 1);
 
     dataSource.dispose();
   } finally {
@@ -250,6 +250,67 @@ test('watchProjectDir keeps the latest watcher when an older setup resolves late
     process.env.HOMEDRIVE = originalEnv.HOMEDRIVE;
     process.env.HOMEPATH = originalEnv.HOMEPATH;
     process.env.USERPROFILE = originalEnv.USERPROFILE;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('findActiveSession resolves locks sequentially', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-lock-seq-'));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const ideRoot = path.join(claudeRoot, 'ide');
+  const workspaceRoot = path.join(root, 'workspace');
+  const projectDir = path.join(claudeRoot, 'projects', slugify(workspaceRoot));
+
+  await mkdir(ideRoot, { recursive: true });
+  await mkdir(projectDir, { recursive: true });
+
+  const originalEnv = snapshotProcessEnv();
+  applyClaudeHome(homeDir);
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([workspaceRoot]));
+  const mutable = dataSource as unknown as {
+    readLockFiles: () => Promise<string[]>;
+    readLock: (lockPath: string) => Promise<{ readonly workspaceFolders: readonly string[] }>;
+    findNewestJsonl: (dir: string) => Promise<{ readonly path: string; readonly mtimeMs: number } | undefined>;
+    findActiveSession: () => Promise<{ readonly projectDir: string; readonly jsonlPath: string } | undefined>;
+  };
+  const lockPaths = [path.join(ideRoot, 'a.lock'), path.join(ideRoot, 'b.lock'), path.join(ideRoot, 'c.lock')];
+  let activeReads = 0;
+  let maxConcurrentReads = 0;
+  let readLockCalls = 0;
+
+  try {
+    await delay(25);
+
+    mutable.readLockFiles = async () => lockPaths;
+    mutable.readLock = async () => {
+      readLockCalls += 1;
+      activeReads += 1;
+      maxConcurrentReads = Math.max(maxConcurrentReads, activeReads);
+
+      try {
+        await delay(40);
+        return { workspaceFolders: [workspaceRoot] };
+      } finally {
+        activeReads -= 1;
+      }
+    };
+    mutable.findNewestJsonl = async (dir: string) => ({
+      path: path.join(dir, 'session.jsonl'),
+      mtimeMs: 1
+    });
+
+    const session = await mutable.findActiveSession();
+
+    assert.equal(readLockCalls, 3);
+    assert.equal(maxConcurrentReads, 1);
+    assert.equal(session?.projectDir, projectDir);
+    assert.equal(session?.jsonlPath, path.join(projectDir, 'session.jsonl'));
+
+    dataSource.dispose();
+  } finally {
+    restoreProcessEnv(originalEnv);
     await rm(root, { recursive: true, force: true });
   }
 });
