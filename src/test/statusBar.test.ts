@@ -30,7 +30,8 @@ function createSource(initial: ContextUpdate) {
     source: {
       onDidChange: emitter.event,
       getLatest: () => latest,
-      dispose: () => emitter.dispose()
+      dispose: () => emitter.dispose(),
+      whenIdle: async () => undefined
     },
     setLatest(next: ContextUpdate) {
       latest = next;

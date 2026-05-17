@@ -1,11 +1,14 @@
 import * as vscode from 'vscode';
-import { createDataSource } from './dataSource';
+import { ContextDataSource, createDataSource } from './dataSource';
 import { HistoricalUsageReader } from './dataSource/historicalUsage';
 import { StatusBarController } from './statusBar';
 import { BreakdownPanel } from './webview/panel';
 
+let activeDataSource: ContextDataSource | undefined;
+
 export function activate(context: vscode.ExtensionContext): void {
   const source = createDataSource();
+  activeDataSource = source;
   const historicalUsage = new HistoricalUsageReader();
   const statusBar = new StatusBarController(source, historicalUsage);
   const panel = new BreakdownPanel(context.extensionUri, historicalUsage);
@@ -18,4 +21,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-export function deactivate(): void {}
+export async function deactivate(): Promise<void> {
+  const source = activeDataSource;
+  activeDataSource = undefined;
+  await source?.whenIdle();
+}
