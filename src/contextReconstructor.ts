@@ -49,8 +49,14 @@ interface DeferredToolsDeltaLine {
   };
 }
 
+interface CachedTextFile {
+  readonly content: string;
+  readonly tokenCount: number;
+}
+
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<ContextBreakdown>>();
+const textFileCache = new Map<string, CachedTextFile>();
 
 export function countTokens(text: string): number {
   return encode(text).length;
@@ -59,6 +65,7 @@ export function countTokens(text: string): number {
 export function clearContextBreakdownCache(): void {
   cache.clear();
   inFlight.clear();
+  textFileCache.clear();
 }
 
 export async function reconstructContextBreakdown(
@@ -171,18 +178,23 @@ export async function countClaudeMdTokens(
 
   claudeMdPaths.add(path.join(homeDir, '.claude', 'CLAUDE.md'));
 
+  const claudeMdFiles = await Promise.all(
+    Array.from(claudeMdPaths).map(async (filePath) => ({
+      filePath,
+      snapshot: await readCachedTextFile(filePath)
+    }))
+  );
+
   let total = 0;
 
-  for (const filePath of claudeMdPaths) {
-    const content = await readTextFile(filePath);
-
-    if (content === undefined) {
+  for (const { filePath, snapshot } of claudeMdFiles) {
+    if (snapshot === undefined) {
       continue;
     }
 
-    total += countTokens(content);
+    total += snapshot.tokenCount;
     total += await countImportedClaudeMdTokens(
-      content,
+      snapshot.content,
       filePath,
       workspaceRoot,
       homeDir,
@@ -207,15 +219,30 @@ export async function countMemoryTokens(sessionPath: string | undefined): Promis
     return 0;
   }
 
+  const memoryFiles = await Promise.all(
+    entries.flatMap((entry) => {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) {
+        return [];
+      }
+
+      const filePath = path.join(memoryDir, entry.name);
+      return [
+        (async () => ({
+          filePath,
+          snapshot: await readCachedTextFile(filePath)
+        }))()
+      ];
+    })
+  );
+
   let total = 0;
 
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.md')) {
+  for (const { snapshot } of memoryFiles) {
+    if (snapshot === undefined) {
       continue;
     }
 
-    const content = await readTextFile(path.join(memoryDir, entry.name));
-    total += content === undefined ? 0 : countTokens(content);
+    total += snapshot.tokenCount;
   }
 
   return total;
@@ -359,13 +386,13 @@ function getClaudeMdPathsUpTree(workspaceRoot: string): readonly string[] {
   const paths: string[] = [];
   let current = path.resolve(workspaceRoot);
 
-  while (true) {
+  for (let index = 0; index < 64; index += 1) {
     paths.push(path.join(current, 'CLAUDE.md'));
 
     const parent = path.dirname(current);
 
     if (parent === current) {
-      break;
+      return paths;
     }
 
     current = parent;
@@ -406,16 +433,16 @@ async function countImportedClaudeMdTokens(
       continue;
     }
 
-    const importedContent = await readTextFile(normalizedPath);
+    const importedSnapshot = await readCachedTextFile(normalizedPath);
 
-    if (importedContent === undefined) {
+    if (importedSnapshot === undefined) {
       continue;
     }
 
     visited.add(normalizedPath);
-    total += countTokens(importedContent);
+    total += importedSnapshot.tokenCount;
     total += await countImportedClaudeMdTokens(
-      importedContent,
+      importedSnapshot.content,
       normalizedPath,
       workspaceRoot,
       homeDir,
@@ -478,6 +505,29 @@ async function readTextFile(filePath: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+async function readCachedTextFile(filePath: string): Promise<CachedTextFile | undefined> {
+  const fingerprint = await fingerprintPath(filePath);
+  const cached = textFileCache.get(fingerprint);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const content = await readTextFile(filePath);
+
+  if (content === undefined) {
+    return undefined;
+  }
+
+  const snapshot = {
+    content,
+    tokenCount: countTokens(content)
+  };
+
+  textFileCache.set(fingerprint, snapshot);
+  return snapshot;
 }
 
 async function readDeferredToolsFromSession(

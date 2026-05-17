@@ -163,7 +163,9 @@ export class JsonlTailDataSource implements ContextDataSource {
   private watchFactory: typeof fs.watch = fs.watch;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private tickTimer: ReturnType<typeof setTimeout> | undefined;
+  private claudeRootWatcherRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private lastTickAt = 0;
+  private pendingTick = false;
   private currentProjectDir: string | undefined;
   private readonly offsets = new Map<string, number>();
   private readonly remainders = new Map<string, string>();
@@ -207,6 +209,10 @@ export class JsonlTailDataSource implements ContextDataSource {
       clearTimeout(this.tickTimer);
     }
 
+    if (this.claudeRootWatcherRetryTimer !== undefined) {
+      clearTimeout(this.claudeRootWatcherRetryTimer);
+    }
+
     this.emitter.dispose();
   }
 
@@ -223,6 +229,11 @@ export class JsonlTailDataSource implements ContextDataSource {
       return;
     }
 
+    if (this.claudeRootWatcherRetryTimer !== undefined) {
+      clearTimeout(this.claudeRootWatcherRetryTimer);
+      this.claudeRootWatcherRetryTimer = undefined;
+    }
+
     const claudeRoot = this.getClaudeRoot();
 
     this.claudeRootWatcherSetup = this.createWatcher(claudeRoot, () => {
@@ -235,7 +246,13 @@ export class JsonlTailDataSource implements ContextDataSource {
       }
 
       this.claudeRootWatcher = watcher;
-    }, () => undefined).finally(() => {
+    }, (err: unknown) => {
+      if (!this.disposed) {
+        const message = err instanceof Error ? err.message : String(err);
+        globalThis.console.warn('[vscode-claude-context] Failed to watch Claude root:', message);
+        this.scheduleClaudeRootWatcherRetry();
+      }
+    }).finally(() => {
       this.claudeRootWatcherSetup = undefined;
     });
   }
@@ -337,7 +354,16 @@ export class JsonlTailDataSource implements ContextDataSource {
   }
 
   private scheduleTick(): void {
-    if (this.disposed || this.tickTimer !== undefined) {
+    if (this.disposed) {
+      return;
+    }
+
+    if (this.refreshing !== undefined) {
+      this.pendingTick = true;
+      return;
+    }
+
+    if (this.tickTimer !== undefined) {
       return;
     }
 
@@ -346,8 +372,9 @@ export class JsonlTailDataSource implements ContextDataSource {
 
     this.tickTimer = setTimeout(() => {
       this.tickTimer = undefined;
-      this.lastTickAt = Date.now();
-      void this.refreshActiveSession();
+      void this.refreshActiveSession().finally(() => {
+        this.lastTickAt = Date.now();
+      });
     }, delayMs);
   }
 
@@ -362,6 +389,7 @@ export class JsonlTailDataSource implements ContextDataSource {
       })
       .finally(() => {
         this.refreshing = undefined;
+        this.drainPendingTick();
       });
 
     return this.refreshing;
@@ -656,6 +684,32 @@ export class JsonlTailDataSource implements ContextDataSource {
 
     this.latest = update;
     this.emitter.fire(update);
+  }
+
+  private drainPendingTick(): void {
+    if (!this.pendingTick || this.disposed) {
+      return;
+    }
+
+    this.pendingTick = false;
+    this.lastTickAt = Date.now();
+    this.scheduleTick();
+  }
+
+  private scheduleClaudeRootWatcherRetry(): void {
+    if (
+      this.disposed ||
+      this.claudeRootWatcher !== undefined ||
+      this.claudeRootWatcherSetup !== undefined ||
+      this.claudeRootWatcherRetryTimer !== undefined
+    ) {
+      return;
+    }
+
+    this.claudeRootWatcherRetryTimer = setTimeout(() => {
+      this.claudeRootWatcherRetryTimer = undefined;
+      this.watchClaudeRoot();
+    }, 60_000);
   }
 }
 

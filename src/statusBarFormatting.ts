@@ -63,6 +63,7 @@ export function buildTooltipText(options: BuildTooltipTextOptions): string {
     lines.push('Context high - run `/compact` or start a new chat');
   }
 
+  lines.push('Token counts use GPT-tokenizer approximation.');
   lines.push('Click for breakdown and details');
   return lines.join('\n');
 }

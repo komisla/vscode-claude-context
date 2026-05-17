@@ -494,13 +494,13 @@ test('JsonlTailDataSource clears stale remainders after jsonl truncation', async
   }
 });
 
-test('scheduleTick measures the five second gap from refresh start', async () => {
+test('scheduleTick measures cooldown from refresh completion', async () => {
   const dataSource = new JsonlTailDataSource(createMockVscode([]));
   await delay(25);
 
   const mutable = dataSource as unknown as {
     scheduleTick: () => void;
-    refreshActiveSession: () => Promise<void>;
+    refreshActiveSessionCore: () => Promise<void>;
     lastTickAt: number;
   };
 
@@ -510,7 +510,7 @@ test('scheduleTick measures the five second gap from refresh start', async () =>
   });
   const before = Date.now();
 
-  mutable.refreshActiveSession = async () => {
+  mutable.refreshActiveSessionCore = async () => {
     await refreshGate;
   };
 
@@ -519,10 +519,54 @@ test('scheduleTick measures the five second gap from refresh start', async () =>
     mutable.scheduleTick();
     await delay(0);
 
-    assert.ok(mutable.lastTickAt >= before);
-  } finally {
+    assert.equal(mutable.lastTickAt, before - 5_000);
+
     releaseRefresh?.();
     await delay(0);
+
+    assert.ok(mutable.lastTickAt >= before);
+  } finally {
+    dataSource.dispose();
+  }
+});
+
+test('scheduleTick queues a follow-up tick while refresh is in flight', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+
+  const mutable = dataSource as unknown as {
+    scheduleTick: () => void;
+    refreshActiveSessionCore: () => Promise<void>;
+    lastTickAt: number;
+    pendingTick: boolean;
+    tickTimer: unknown;
+  };
+
+  let releaseRefresh: (() => void) | undefined;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+
+  mutable.refreshActiveSessionCore = async () => {
+    await refreshGate;
+  };
+
+  try {
+    mutable.lastTickAt = Date.now() - 5_000;
+    mutable.scheduleTick();
+    await delay(0);
+
+    assert.equal(mutable.pendingTick, false);
+
+    mutable.scheduleTick();
+    assert.equal(mutable.pendingTick, true);
+
+    releaseRefresh?.();
+    await delay(0);
+
+    assert.equal(mutable.pendingTick, false);
+    assert.notEqual(mutable.tickTimer, undefined);
+  } finally {
     dataSource.dispose();
   }
 });
