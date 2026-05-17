@@ -143,28 +143,6 @@ export class HistoricalUsageReader {
       return;
     }
 
-    if (cached !== undefined && stats.size === previousOffset && cached.mtimeMs !== stats.mtimeMs) {
-      let entries: TokenEntry[];
-
-      try {
-        entries = await this.readEntireFile(jsonlPath, minTimestamp);
-      } catch {
-        this.cache.delete(jsonlPath);
-        this.fileOffsets.delete(jsonlPath);
-        this.fileRemainders.delete(jsonlPath);
-        return;
-      }
-
-      this.cache.set(jsonlPath, {
-        mtimeMs: stats.mtimeMs,
-        size: stats.size,
-        entries
-      });
-      this.fileOffsets.set(jsonlPath, stats.size);
-      this.fileRemainders.delete(jsonlPath);
-      return;
-    }
-
     if (cached === undefined || truncated) {
       let entries: TokenEntry[];
 

@@ -34,11 +34,6 @@ interface ResolvedLockSession {
   readonly jsonlMtimeMs: number;
 }
 
-interface CachedFileMeta {
-  readonly size: number;
-  readonly mtimeMs: number;
-}
-
 interface CachedLockFile {
   readonly workspaceFolders: string[];
 }
@@ -172,7 +167,6 @@ export class JsonlTailDataSource implements ContextDataSource {
   private currentProjectDir: string | undefined;
   private readonly offsets = new Map<string, number>();
   private readonly remainders = new Map<string, string>();
-  private readonly fileMeta = new Map<string, CachedFileMeta>();
   private readonly lockCache = new Map<string, CachedLockFile>();
   private ideDirectoryCache: CachedIdeDirectory | undefined;
   private disposed = false;
@@ -593,24 +587,19 @@ export class JsonlTailDataSource implements ContextDataSource {
     } catch {
       this.offsets.delete(filePath);
       this.remainders.delete(filePath);
-      this.fileMeta.delete(filePath);
       this.emitUpdate({ error: SESSION_NOT_FOUND_ERROR });
       return;
     }
 
-    const previousMeta = this.fileMeta.get(filePath);
-    const truncated =
-      previousMeta !== undefined &&
-      (stats.size < previousMeta.size || stats.mtimeMs < previousMeta.mtimeMs);
+    const previousOffset = this.offsets.get(filePath);
 
-    if (!this.offsets.has(filePath)) {
+    if (previousOffset === undefined) {
       // Seed the offset at EOF on first encounter so we only read future appends.
       this.offsets.set(filePath, stats.size);
-      this.fileMeta.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs });
       return;
     }
 
-    const previousOffset = this.offsets.get(filePath) ?? 0;
+    const truncated = stats.size < previousOffset;
 
     if (truncated) {
       this.offsets.set(filePath, 0);
@@ -618,7 +607,6 @@ export class JsonlTailDataSource implements ContextDataSource {
     }
 
     const offset = truncated ? 0 : previousOffset;
-    this.fileMeta.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs });
 
     if (stats.size === offset) {
       return;

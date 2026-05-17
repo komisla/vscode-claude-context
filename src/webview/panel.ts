@@ -11,6 +11,8 @@ import {
 } from '../dataSource/historicalUsage';
 import dashboardHtml from './dashboard.html';
 
+const HISTORY_REFRESH_THROTTLE_MS = 30_000;
+
 type WebviewCommand =
   | {
       readonly type: 'copyCompact';
@@ -58,6 +60,9 @@ export class BreakdownPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private readonly historicalUsage: HistoricalUsageReader;
   private readonly panelSubscriptions: vscode.Disposable[] = [];
+  private historySnapshot: HistoricalUsageSnapshot | undefined;
+  private historyRefreshAt = 0;
+  private historyRefreshing: Promise<HistoricalUsageSnapshot | undefined> | undefined;
   private postSequence = 0;
 
   public constructor(private readonly extensionUri: vscode.Uri, historicalUsage: HistoricalUsageReader) {
@@ -151,11 +156,32 @@ export class BreakdownPanel implements vscode.Disposable {
       return undefined;
     }
 
-    try {
-      return await this.historicalUsage.refresh(this.getHistoricalUsageBudgets());
-    } catch {
-      return undefined;
+    const now = Date.now();
+
+    if (this.historyRefreshing !== undefined) {
+      return this.historyRefreshing;
     }
+
+    if (this.historyRefreshAt !== 0 && now - this.historyRefreshAt < HISTORY_REFRESH_THROTTLE_MS) {
+      return this.historySnapshot;
+    }
+
+    this.historyRefreshing = this.historicalUsage
+      .refresh(this.getHistoricalUsageBudgets())
+      .then((snapshot) => {
+        this.historySnapshot = snapshot;
+        this.historyRefreshAt = Date.now();
+        return snapshot;
+      })
+      .catch(() => {
+        this.historyRefreshAt = Date.now();
+        return this.historySnapshot;
+      })
+      .finally(() => {
+        this.historyRefreshing = undefined;
+      });
+
+    return this.historyRefreshing;
   }
 
   private getHistoricalUsageBudgets(): HistoricalUsageBudgets {

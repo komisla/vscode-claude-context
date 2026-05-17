@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsPromises } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ContextUpdate } from '../dataSource';
@@ -273,7 +273,7 @@ test('reconstructor clamps conversation and always marks estimates', async () =>
   assert.equal(breakdown.fillPercent, 1);
 });
 
-test('reconstructor caches for 30 seconds and invalidates when source changes', async () => {
+test('reconstructor invalidates when sessionPath mtime changes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-cache-'));
   clearContextBreakdownCache();
 
@@ -309,7 +309,7 @@ test('reconstructor caches for 30 seconds and invalidates when source changes', 
     );
 
     assert.equal(first.categories.tools, TOKENS_PER_BUILTIN_TOOL);
-    assert.equal(cached.categories.tools, TOKENS_PER_BUILTIN_TOOL);
+    assert.equal(cached.categories.tools, TOKENS_PER_BUILTIN_TOOL * 2);
     assert.equal(invalidated.categories.tools, TOKENS_PER_BUILTIN_TOOL * 2);
   } finally {
     clearContextBreakdownCache();
@@ -367,6 +367,63 @@ test('reconstructor reuses the cache for equivalent sources with different prope
 
     assert.strictEqual(first, second);
     assert.equal(claudeMdReadCount, 1);
+  } finally {
+    mutableFsPromises.readFile = originalReadFile;
+    clearContextBreakdownCache();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('reconstructor invalidates when CLAUDE.md mtime changes', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-mtime-'));
+  clearContextBreakdownCache();
+
+  const homeDir = path.join(root, 'home');
+  const claudeDir = path.join(homeDir, '.claude');
+  await mkdir(claudeDir, { recursive: true });
+  const claudePath = path.join(claudeDir, 'CLAUDE.md');
+  await writeFile(claudePath, 'alpha');
+
+  const mutableFsPromises = fsPromises as {
+    readFile: (...args: unknown[]) => Promise<unknown>;
+  };
+  const originalReadFile = mutableFsPromises.readFile;
+  let claudeMdReadCount = 0;
+
+  mutableFsPromises.readFile = async (...args: unknown[]) => {
+    const [filePath] = args;
+
+    if (typeof filePath === 'string' && filePath.endsWith(path.join('.claude', 'CLAUDE.md'))) {
+      claudeMdReadCount += 1;
+    }
+
+    return originalReadFile(...args);
+  };
+
+  try {
+    const source = {
+      totalTokens: 5_000,
+      effectiveWindow: 178_808,
+      fillPercent: 3
+    } satisfies ContextUpdate;
+
+    const first = await reconstructContextBreakdown(source, {
+      homeDir,
+      now: () => 1_000
+    });
+
+    await writeFile(claudePath, 'alpha beta');
+    const changed = new Date('2026-05-16T11:30:00Z');
+    await utimes(claudePath, changed, changed);
+
+    const second = await reconstructContextBreakdown(source, {
+      homeDir,
+      now: () => 2_000
+    });
+
+    assert.equal(first.categories.claudeMd, countTokens('alpha'));
+    assert.equal(second.categories.claudeMd, countTokens('alpha beta'));
+    assert.equal(claudeMdReadCount, 2);
   } finally {
     mutableFsPromises.readFile = originalReadFile;
     clearContextBreakdownCache();

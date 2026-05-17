@@ -177,6 +177,40 @@ test('historical reader re-reads truncated files from scratch', async () => {
   }
 });
 
+test('historical reader ignores touch-only mtime changes when file size is unchanged', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-touch-'));
+
+  try {
+    const filePath = path.join(root, 'session.jsonl');
+    await writeFile(filePath, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`);
+
+    const reader = new HistoricalUsageReader(root);
+    const mutable = reader as unknown as {
+      readEntireFile: (jsonlPath: string, minTimestamp: number) => Promise<unknown[]>;
+    };
+    const originalReadEntireFile = mutable.readEntireFile.bind(reader);
+    let readEntireFileCalls = 0;
+
+    mutable.readEntireFile = async (jsonlPath: string, minTimestamp: number) => {
+      readEntireFileCalls += 1;
+      return originalReadEntireFile(jsonlPath, minTimestamp);
+    };
+
+    const first = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    assert.equal(first.tokens5h, 100);
+    assert.equal(readEntireFileCalls, 1);
+
+    const current = new Date('2026-05-16T11:30:00Z');
+    await utimes(filePath, current, current);
+
+    const second = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    assert.equal(second.tokens5h, 100);
+    assert.equal(readEntireFileCalls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('historical reader deduplicates concurrent refresh work', async () => {
   const reader = new HistoricalUsageReader(path.join(tmpdir(), 'claude-history-inflight-root'));
   const mutable = reader as unknown as {
