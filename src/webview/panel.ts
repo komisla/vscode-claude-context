@@ -174,7 +174,6 @@ export class BreakdownPanel implements vscode.Disposable {
         return snapshot;
       })
       .catch(() => {
-        this.historyRefreshAt = Date.now();
         return this.historySnapshot;
       })
       .finally(() => {

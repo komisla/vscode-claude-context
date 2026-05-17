@@ -10,6 +10,8 @@ import type { ContextDataSource, ContextUpdate } from '.';
 
 const UPDATE_INTERVAL_MS = 5_000;
 const CLAUDE_INTERNAL_RESERVE_TOKENS = 13_000;
+const WATCHER_ERROR_RETRY_MS = 30_000;
+const CLAUDE_ROOT_WATCHER_ERROR_RETRY_MS = 60_000;
 const SESSION_NOT_FOUND_ERROR = 'Claude Code session not found';
 
 interface ModelLimits {
@@ -28,6 +30,7 @@ interface JsonlCandidate {
 }
 
 interface ResolvedLockSession {
+  readonly lockPath: string;
   readonly projectDir: string;
   readonly jsonlPath: string;
   readonly lockMtimeMs: number;
@@ -247,10 +250,20 @@ export class JsonlTailDataSource implements ContextDataSource {
 
     const claudeRoot = this.getClaudeRoot();
 
-    this.claudeRootWatcherSetup = this.createWatcher(claudeRoot, () => {
-      this.watchIdeRoot();
-      this.scheduleRefresh(250);
-    }).then((watcher) => {
+    this.claudeRootWatcherSetup = this.createWatcher(
+      claudeRoot,
+      () => {
+        this.watchIdeRoot();
+        this.scheduleRefresh(250);
+      },
+      (watcher) => {
+        if (this.claudeRootWatcher === watcher) {
+          this.claudeRootWatcher = undefined;
+        }
+
+        this.scheduleRefresh(CLAUDE_ROOT_WATCHER_ERROR_RETRY_MS);
+      }
+    ).then((watcher) => {
       if (this.disposed) {
         watcher.close();
         return;
@@ -273,7 +286,17 @@ export class JsonlTailDataSource implements ContextDataSource {
       return;
     }
 
-    this.ideWatcherSetup = this.createWatcher(this.getClaudeIdeRoot(), () => this.scheduleRefresh(250))
+    this.ideWatcherSetup = this.createWatcher(
+      this.getClaudeIdeRoot(),
+      () => this.scheduleRefresh(250),
+      (watcher) => {
+        if (this.ideWatcher === watcher) {
+          this.ideWatcher = undefined;
+        }
+
+        this.scheduleRefresh(WATCHER_ERROR_RETRY_MS);
+      }
+    )
       .then((watcher) => {
         if (this.disposed) {
           watcher.close();
@@ -297,13 +320,23 @@ export class JsonlTailDataSource implements ContextDataSource {
     this.projectWatcher = undefined;
     this.currentProjectDir = targetDir;
 
-    this.createWatcher(targetDir, (_event, filename) => {
-      const changedFilename = typeof filename === 'string' ? filename : filename?.toString();
+    this.createWatcher(
+      targetDir,
+      (_event, filename) => {
+        const changedFilename = typeof filename === 'string' ? filename : filename?.toString();
 
-      if (changedFilename === undefined || changedFilename.endsWith('.jsonl')) {
-        this.scheduleTick();
+        if (changedFilename === undefined || changedFilename.endsWith('.jsonl')) {
+          this.scheduleTick();
+        }
+      },
+      (watcher) => {
+        if (this.projectWatcher === watcher) {
+          this.projectWatcher = undefined;
+        }
+
+        this.scheduleRefresh(WATCHER_ERROR_RETRY_MS);
       }
-    }).then((watcher) => {
+    ).then((watcher) => {
       if (
         !this.disposed &&
         this.currentProjectDir === targetDir &&
@@ -318,7 +351,8 @@ export class JsonlTailDataSource implements ContextDataSource {
 
   private async createWatcher(
     dir: string,
-    listener: (event: string, filename: string | Buffer | null) => void
+    listener: (event: string, filename: string | Buffer | null) => void,
+    onError: (watcher: fs.FSWatcher) => void = () => undefined
   ): Promise<fs.FSWatcher> {
     await fsp.access(dir);
     const watcher = this.watchFactory(dir, listener);
@@ -330,20 +364,7 @@ export class JsonlTailDataSource implements ContextDataSource {
 
       globalThis.console.warn('[vscode-claude-context] FSWatcher error:', err.message);
       watcher.close();
-
-      if (this.claudeRootWatcher === watcher) {
-        this.claudeRootWatcher = undefined;
-      }
-
-      if (this.ideWatcher === watcher) {
-        this.ideWatcher = undefined;
-      }
-
-      if (this.projectWatcher === watcher) {
-        this.projectWatcher = undefined;
-      }
-
-      this.scheduleRefresh(30_000);
+      onError(watcher);
     });
 
     return watcher;
@@ -470,6 +491,7 @@ export class JsonlTailDataSource implements ContextDataSource {
       }
 
       lockResults.push({
+        lockPath,
         projectDir,
         jsonlPath: jsonl.path,
         lockMtimeMs: lockStats.mtimeMs,
@@ -480,15 +502,20 @@ export class JsonlTailDataSource implements ContextDataSource {
     let bestSession: ActiveSession | undefined;
     let bestLockMtimeMs = -1;
     let bestJsonlMtimeMs = -1;
+    let bestLockPath = '';
 
     for (const result of lockResults) {
       if (
         result !== undefined &&
         (result.lockMtimeMs > bestLockMtimeMs ||
-          (result.lockMtimeMs === bestLockMtimeMs && result.jsonlMtimeMs > bestJsonlMtimeMs))
+          (result.lockMtimeMs === bestLockMtimeMs &&
+            (result.jsonlMtimeMs > bestJsonlMtimeMs ||
+              (result.jsonlMtimeMs === bestJsonlMtimeMs &&
+                (bestSession === undefined || result.lockPath < bestLockPath)))))
       ) {
         bestLockMtimeMs = result.lockMtimeMs;
         bestJsonlMtimeMs = result.jsonlMtimeMs;
+        bestLockPath = result.lockPath;
         bestSession = {
           projectDir: result.projectDir,
           jsonlPath: result.jsonlPath

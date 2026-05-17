@@ -10,6 +10,8 @@ export const TOKENS_PER_BUILTIN_TOOL = 300;
 export const TOKENS_PER_MCP_TOOL = 400;
 export const BREAKDOWN_CACHE_MS = 30_000;
 const MIN_TOKENS_FOR_DRIFT_WARNING = 20_000;
+const CONTEXT_BREAKDOWN_PRUNE_INTERVAL_MS = 60_000;
+const CLAUDE_MD_MISSING_FINGERPRINT_TTL_MS = 5_000;
 const MAX_IMPORTED_CLAUDE_MD_DEPTH = 10;
 
 export interface ContextBreakdownCategories {
@@ -55,9 +57,17 @@ interface CachedTextFile {
   readonly tokenCount: number;
 }
 
+interface MissingFingerprintEntry {
+  readonly fingerprint: string;
+  readonly expiresAt: number;
+}
+
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<ContextBreakdown>>();
 const textFileCache = new Map<string, CachedTextFile>();
+const claudeMdPathTreeCache = new Map<string, readonly string[]>();
+const missingFingerprintCache = new Map<string, MissingFingerprintEntry>();
+let lastContextBreakdownPruneAt = 0;
 
 export function countTokens(text: string): number {
   return encode(text).length;
@@ -67,6 +77,9 @@ export function clearContextBreakdownCache(): void {
   cache.clear();
   inFlight.clear();
   textFileCache.clear();
+  claudeMdPathTreeCache.clear();
+  missingFingerprintCache.clear();
+  lastContextBreakdownPruneAt = 0;
 }
 
 export async function reconstructContextBreakdown(
@@ -80,6 +93,7 @@ export async function reconstructContextBreakdown(
   const cached = cache.get(key);
 
   if (cached !== undefined && cached.expiresAt > now) {
+    maybePruneExpiredContextBreakdownCache(now);
     return cached.value;
   }
 
@@ -97,7 +111,7 @@ export async function reconstructContextBreakdown(
       expiresAt: now + BREAKDOWN_CACHE_MS,
       value: emptyBreakdown
     });
-    pruneExpiredContextBreakdownCache(now);
+    maybePruneExpiredContextBreakdownCache(now);
 
     return emptyBreakdown;
   }
@@ -133,7 +147,7 @@ export async function reconstructContextBreakdown(
       expiresAt: now + BREAKDOWN_CACHE_MS,
       value: breakdown
     });
-    pruneExpiredContextBreakdownCache(now);
+    maybePruneExpiredContextBreakdownCache(now);
 
     return breakdown;
   })();
@@ -173,7 +187,7 @@ export async function countClaudeMdTokens(
   const claudeMdPaths = new Set<string>();
 
   if (workspaceRoot !== undefined) {
-    for (const filePath of getClaudeMdPathsUpTree(workspaceRoot)) {
+    for (const filePath of getClaudeMdPathsUpTreeCached(workspaceRoot)) {
       claudeMdPaths.add(filePath);
     }
   }
@@ -328,7 +342,7 @@ async function getClaudeMdFingerprint(
   const claudeMdPaths = new Set<string>();
 
   if (workspaceRoot !== undefined) {
-    for (const filePath of getClaudeMdPathsUpTree(workspaceRoot)) {
+    for (const filePath of getClaudeMdPathsUpTreeCached(workspaceRoot)) {
       claudeMdPaths.add(filePath);
     }
   }
@@ -375,12 +389,24 @@ async function getMemoryFingerprint(sessionPath: string | undefined): Promise<re
 
 async function fingerprintPath(filePath: string): Promise<string> {
   const resolvedPath = path.resolve(filePath);
+  const now = Date.now();
+  const cached = missingFingerprintCache.get(resolvedPath);
+
+  if (cached !== undefined && cached.expiresAt > now) {
+    return cached.fingerprint;
+  }
 
   try {
     const stats = await fsp.stat(filePath);
+    missingFingerprintCache.delete(resolvedPath);
     return `${resolvedPath}:${stats.size}:${stats.mtimeMs}`;
   } catch {
-    return `${resolvedPath}:missing`;
+    const fingerprint = `${resolvedPath}:missing`;
+    missingFingerprintCache.set(resolvedPath, {
+      fingerprint,
+      expiresAt: now + CLAUDE_MD_MISSING_FINGERPRINT_TTL_MS
+    });
+    return fingerprint;
   }
 }
 
@@ -400,6 +426,19 @@ function getClaudeMdPathsUpTree(workspaceRoot: string): readonly string[] {
     current = parent;
   }
 
+  return paths;
+}
+
+function getClaudeMdPathsUpTreeCached(workspaceRoot: string): readonly string[] {
+  const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
+  const cached = claudeMdPathTreeCache.get(resolvedWorkspaceRoot);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const paths = getClaudeMdPathsUpTree(resolvedWorkspaceRoot);
+  claudeMdPathTreeCache.set(resolvedWorkspaceRoot, paths);
   return paths;
 }
 
@@ -459,6 +498,7 @@ async function countImportedClaudeMdTokens(
 function extractAtImports(content: string): readonly string[] {
   const imports: string[] = [];
   const stripped = content
+    .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`[^\n`]+`/g, ' ');
   const regex = /(?:^|\s)@([^\s@]+)/g;
@@ -593,6 +633,15 @@ function applyDeferredToolsDeltaLine(activeTools: Set<string>, lineText: string)
   for (const name of getStringArray(line.attachment.readdedNames)) {
     activeTools.add(name);
   }
+}
+
+function maybePruneExpiredContextBreakdownCache(now: number): void {
+  if (now - lastContextBreakdownPruneAt < CONTEXT_BREAKDOWN_PRUNE_INTERVAL_MS) {
+    return;
+  }
+
+  lastContextBreakdownPruneAt = now;
+  pruneExpiredContextBreakdownCache(now);
 }
 
 function pruneExpiredContextBreakdownCache(now: number): void {

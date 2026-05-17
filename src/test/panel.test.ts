@@ -126,6 +126,50 @@ test('BreakdownPanel throttles historical usage refreshes', async () => {
   }
 });
 
+test('BreakdownPanel retries historical usage refreshes after failures', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: true
+  });
+
+  let refreshCalls = 0;
+  const historicalUsage = {
+    refresh: async () => {
+      refreshCalls += 1;
+
+      if (refreshCalls === 1) {
+        throw new Error('temporary history failure');
+      }
+
+      return makeHistorySnapshot(20, 30);
+    }
+  } as unknown as HistoricalUsageReader;
+
+  const tracker = createSource({
+    fillPercent: 35
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+
+  try {
+    panel.open(tracker.source);
+    await flush();
+
+    assert.equal(refreshCalls, 1);
+
+    tracker.fire({
+      fillPercent: 35
+    });
+    await flush();
+
+    assert.equal(refreshCalls, 2);
+  } finally {
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
 test('BreakdownPanel tears down subscriptions when the panel closes', async () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();

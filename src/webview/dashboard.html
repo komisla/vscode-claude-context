@@ -366,6 +366,10 @@
       });
 
       window.addEventListener('message', (event) => {
+        if (event.source !== window) {
+          return;
+        }
+
         if (event.data?.type === 'contextSnapshot') {
           renderSnapshot(event.data.payload);
           return;
