@@ -37,8 +37,10 @@ const config = {
         type: 'asset/source'
       }
     ]
-  },
-  devtool: 'hidden-source-map'
+  }
 };
 
-module.exports = config;
+module.exports = (_env, argv = {}) => ({
+  ...config,
+  devtool: argv.mode === 'production' ? false : 'hidden-source-map'
+});
