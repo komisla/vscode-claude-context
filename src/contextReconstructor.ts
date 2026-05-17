@@ -53,6 +53,7 @@ interface DeferredToolsDeltaLine {
 }
 
 interface CachedTextFile {
+  readonly fingerprint: string;
   readonly content: string;
   readonly tokenCount: number;
 }
@@ -553,11 +554,16 @@ async function readTextFile(filePath: string): Promise<string | undefined> {
 }
 
 async function readCachedTextFile(filePath: string): Promise<CachedTextFile | undefined> {
+  const resolvedPath = path.resolve(filePath);
   const fingerprint = await fingerprintPath(filePath);
-  const cached = textFileCache.get(fingerprint);
+  const cached = textFileCache.get(resolvedPath);
+
+  if (cached !== undefined && cached.fingerprint === fingerprint) {
+    return cached;
+  }
 
   if (cached !== undefined) {
-    return cached;
+    textFileCache.delete(resolvedPath);
   }
 
   const content = await readTextFile(filePath);
@@ -567,11 +573,12 @@ async function readCachedTextFile(filePath: string): Promise<CachedTextFile | un
   }
 
   const snapshot = {
+    fingerprint,
     content,
     tokenCount: countTokens(content)
   };
 
-  textFileCache.set(fingerprint, snapshot);
+  textFileCache.set(resolvedPath, snapshot);
   return snapshot;
 }
 
