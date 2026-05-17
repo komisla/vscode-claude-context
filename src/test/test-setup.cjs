@@ -160,7 +160,8 @@ const mockState = {
   clipboardWrites: [],
   informationMessages: [],
   openExternalCalls: [],
-  openExternalResult: true
+  openExternalResult: true,
+  extensions: new Map()
 };
 
 const workspace = {
@@ -251,6 +252,21 @@ const env = {
   openExternalResult: true
 };
 
+const extensions = {
+  getExtension(extensionId) {
+    return mockState.extensions.get(extensionId);
+  }
+};
+
+function setExtension(extensionId, extension) {
+  if (extension === undefined) {
+    mockState.extensions.delete(extensionId);
+    return;
+  }
+
+  mockState.extensions.set(extensionId, extension);
+}
+
 function resetMockState() {
   mockState.configuration.clear();
   mockState.statusBarItems.length = 0;
@@ -260,6 +276,7 @@ function resetMockState() {
   mockState.informationMessages.length = 0;
   mockState.openExternalCalls.length = 0;
   mockState.openExternalResult = true;
+  mockState.extensions.clear();
   workspace.workspaceFolders = [];
   workspace.configurationEmitter = new MockEventEmitter();
   env.openExternalResult = true;
@@ -287,8 +304,10 @@ const vscodeMock = {
   window,
   commands,
   env,
+  extensions,
   resetMockState,
-  setWorkspaceConfiguration
+  setWorkspaceConfiguration,
+  setExtension
 };
 
 const originalLoad = Module._load;
