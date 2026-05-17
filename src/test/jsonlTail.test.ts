@@ -452,8 +452,7 @@ test('JsonlTailDataSource clears stale remainders after jsonl truncation', async
         cache_read_input_tokens: 0,
         cache_creation_input_tokens: 0,
         output_tokens: 0
-      },
-      padding: 'x'.repeat(512)
+      }
     }
   };
 
@@ -477,8 +476,8 @@ test('JsonlTailDataSource clears stale remainders after jsonl truncation', async
     await writeFile(fixture.sessionPath, `${JSON.stringify(newTurn)}\n`);
     await fsp.utimes(
       fixture.sessionPath,
-      new Date(oldStats.mtimeMs - 1_000),
-      new Date(oldStats.mtimeMs - 1_000)
+      new Date(oldStats.mtimeMs),
+      new Date(oldStats.mtimeMs)
     );
 
     const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 42);

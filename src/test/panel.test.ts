@@ -47,17 +47,6 @@ function createSource(initial: ContextUpdate) {
   };
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-
-  return { promise, resolve, reject };
-}
-
 function makeHistorySnapshot(pct5h: number, pct7d: number): HistoricalUsageSnapshot {
   return {
     tokens5h: 0,
@@ -73,22 +62,21 @@ async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-test('BreakdownPanel drops out-of-order snapshots', async () => {
+test('BreakdownPanel throttles historical usage refreshes', async () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
     showHistoricalUsage: true
   });
 
-  const firstHistory = deferred<HistoricalUsageSnapshot>();
+  const originalDateNow = Date.now;
+  let currentTime = Date.parse('2026-05-16T12:00:00Z');
+  Date.now = () => currentTime;
+
   let refreshCalls = 0;
   const historicalUsage = {
     refresh: async () => {
       refreshCalls += 1;
-      if (refreshCalls === 1) {
-        return firstHistory.promise;
-      }
-
       return makeHistorySnapshot(20, 30);
     }
   } as unknown as HistoricalUsageReader;
@@ -98,35 +86,32 @@ test('BreakdownPanel drops out-of-order snapshots', async () => {
   });
 
   const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
-  panel.open(tracker.source);
 
-  assert.equal(vscodeMock.window.webviewPanels.length, 1);
-  const mockPanel = vscodeMock.window.webviewPanels[0];
+  try {
+    panel.open(tracker.source);
+    await flush();
 
-  tracker.fire({
-    fillPercent: 55
-  });
-  await flush();
+    assert.equal(refreshCalls, 1);
 
-  assert.equal(mockPanel.postedMessages.length, 1);
-  const firstMessage = mockPanel.postedMessages[0] as {
-    readonly type: 'contextSnapshot';
-    readonly payload: {
-      readonly breakdown: {
-        readonly fillPercent: number;
-      };
-    };
-  };
-  assert.equal(firstMessage.type, 'contextSnapshot');
-  assert.equal(firstMessage.payload.breakdown.fillPercent, 55);
+    tracker.fire({
+      fillPercent: 55
+    });
+    await flush();
 
-  firstHistory.resolve(makeHistorySnapshot(80, 90));
-  await flush();
+    assert.equal(refreshCalls, 1);
 
-  assert.equal(mockPanel.postedMessages.length, 1);
+    currentTime += 31_000;
+    tracker.fire({
+      fillPercent: 65
+    });
+    await flush();
 
-  panel.dispose();
-  tracker.source.dispose();
+    assert.equal(refreshCalls, 2);
+  } finally {
+    Date.now = originalDateNow;
+    tracker.source.dispose();
+    panel.dispose();
+  }
 });
 
 test('BreakdownPanel tears down subscriptions when the panel closes', async () => {

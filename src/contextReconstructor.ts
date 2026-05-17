@@ -66,7 +66,8 @@ export async function reconstructContextBreakdown(
   options: ReconstructContextBreakdownOptions = {}
 ): Promise<ContextBreakdown> {
   const now = options.now?.() ?? Date.now();
-  const key = getCacheKey(source, options.workspaceRoot, options.homeDir);
+  const homeDir = options.homeDir ?? os.homedir();
+  const key = await getCacheKey(source, options.workspaceRoot, homeDir);
   const totalTokens = source.totalTokens;
   const cached = cache.get(key);
 
@@ -101,7 +102,7 @@ export async function reconstructContextBreakdown(
 
   const promise = (async () => {
     const systemPrompt = CC_BASE_SYSTEM_PROMPT_TOKENS;
-    const claudeMd = await countClaudeMdTokens(options.workspaceRoot, options.homeDir);
+    const claudeMd = await countClaudeMdTokens(options.workspaceRoot, homeDir);
     const memory = await countMemoryTokens(source.sessionPath);
     const tools = await estimateToolTokens(source.sessionPath);
     const conversation = Math.max(0, totalTokens - systemPrompt - claudeMd - memory - tools);
@@ -263,21 +264,93 @@ export function isMcpToolName(toolName: string): boolean {
   return toolName.includes('__');
 }
 
-function getCacheKey(
+async function getCacheKey(
   source: ContextUpdate,
   workspaceRoot: string | undefined,
-  homeDir: string | undefined
-): string {
-  return [
+  homeDir: string
+): Promise<string> {
+  const parts = [
     source.sessionPath,
     source.totalTokens,
     source.effectiveWindow,
     source.fillPercent,
     workspaceRoot,
-    homeDir
-  ]
-    .map(String)
-    .join('|');
+    homeDir,
+    ...(await getSessionPathFingerprint(source.sessionPath)),
+    ...(await getClaudeMdFingerprint(workspaceRoot, homeDir)),
+    ...(await getMemoryFingerprint(source.sessionPath))
+  ];
+
+  return parts.join('|');
+}
+
+async function getSessionPathFingerprint(sessionPath: string | undefined): Promise<readonly string[]> {
+  if (sessionPath === undefined) {
+    return [];
+  }
+
+  return [await fingerprintPath(sessionPath)];
+}
+
+async function getClaudeMdFingerprint(
+  workspaceRoot: string | undefined,
+  homeDir: string
+): Promise<readonly string[]> {
+  const claudeMdPaths = new Set<string>();
+
+  if (workspaceRoot !== undefined) {
+    for (const filePath of getClaudeMdPathsUpTree(workspaceRoot)) {
+      claudeMdPaths.add(filePath);
+    }
+  }
+
+  claudeMdPaths.add(path.join(homeDir, '.claude', 'CLAUDE.md'));
+
+  const fingerprints: string[] = [];
+
+  for (const filePath of claudeMdPaths) {
+    fingerprints.push(await fingerprintPath(filePath));
+  }
+
+  return fingerprints;
+}
+
+async function getMemoryFingerprint(sessionPath: string | undefined): Promise<readonly string[]> {
+  if (sessionPath === undefined) {
+    return [];
+  }
+
+  const memoryDir = path.join(path.dirname(sessionPath), 'memory');
+  let entries: import('fs').Dirent[];
+
+  try {
+    entries = await fsp.readdir(memoryDir, { withFileTypes: true });
+  } catch {
+    return [await fingerprintPath(memoryDir)];
+  }
+
+  const fingerprints: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) {
+      continue;
+    }
+
+    fingerprints.push(await fingerprintPath(path.join(memoryDir, entry.name)));
+  }
+
+  return fingerprints;
+}
+
+async function fingerprintPath(filePath: string): Promise<string> {
+  const resolvedPath = path.resolve(filePath);
+
+  try {
+    const stats = await fsp.stat(filePath);
+    return `${resolvedPath}:${stats.size}:${stats.mtimeMs}`;
+  } catch {
+    return `${resolvedPath}:missing`;
+  }
 }
 
 function getClaudeMdPathsUpTree(workspaceRoot: string): readonly string[] {
