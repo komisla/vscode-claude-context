@@ -14,6 +14,7 @@ export interface ContextUpdate {
 export interface ContextDataSource extends vscode.Disposable {
   readonly onDidChange: vscode.Event<ContextUpdate>;
   getLatest(): ContextUpdate;
+  whenIdle(): Promise<void>;
 }
 
 export function createDataSource(): ContextDataSource {
