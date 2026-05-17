@@ -241,6 +241,37 @@ test('historical reader deduplicates concurrent refresh work', async () => {
   assert.strictEqual(firstSnapshot, secondSnapshot);
 });
 
+test('historical reader prunes stale directory cache entries on refresh', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-dir-cache-'));
+
+  try {
+    const projectDir = path.join(root, 'project');
+    const filePath = path.join(projectDir, 'session.jsonl');
+    const staleDirectory = path.join(root, 'stale-project');
+
+    await mkdir(projectDir);
+    await writeFile(filePath, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`);
+
+    const reader = new HistoricalUsageReader(root);
+    const mutable = reader as unknown as {
+      directoryCache: Map<string, { readonly mtimeMs: number; readonly entries: readonly unknown[] }>;
+    };
+
+    mutable.directoryCache.set(staleDirectory, {
+      mtimeMs: 1,
+      entries: []
+    });
+
+    await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+
+    assert.equal(mutable.directoryCache.has(staleDirectory), false);
+    assert.equal(mutable.directoryCache.has(root), true);
+    assert.equal(mutable.directoryCache.has(projectDir), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function makeAssistantLine(timestamp: string, inputTokens: number, model?: unknown): unknown {
   return {
     timestamp,

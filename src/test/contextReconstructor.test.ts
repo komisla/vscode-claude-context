@@ -71,6 +71,35 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
   }
 });
 
+test('ignores @ imports inside fenced and inline code', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-code-block-'));
+
+  try {
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    await mkdir(workspaceRoot, { recursive: true });
+
+    const workspaceClaude = [
+      'workspace rules',
+      '```md',
+      '@./code-block.md',
+      '```',
+      'Inline `@./inline.md` reference',
+      '@./included.md'
+    ].join('\n');
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+    await writeFile(path.join(workspaceRoot, 'code-block.md'), 'code block import should be ignored');
+    await writeFile(path.join(workspaceRoot, 'inline.md'), 'inline import should be ignored');
+    await writeFile(path.join(workspaceRoot, 'included.md'), 'included import should be counted');
+
+    const expected = countTokens(workspaceClaude) + countTokens('included import should be counted');
+
+    assert.equal(await countClaudeMdTokens(workspaceRoot, path.join(root, 'home')), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('bare @name.md references are ignored during CLAUDE.md import counting', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-bare-import-'));
 

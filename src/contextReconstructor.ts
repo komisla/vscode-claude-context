@@ -456,8 +456,11 @@ async function countImportedClaudeMdTokens(
 
 function extractAtImports(content: string): readonly string[] {
   const imports: string[] = [];
+  const stripped = content
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^\n`]+`/g, ' ');
   const regex = /(?:^|\s)@([^\s@]+)/g;
-  let match = regex.exec(content);
+  let match = regex.exec(stripped);
 
   while (match !== null) {
     const importPath = cleanImportPath(match[1]);
@@ -473,7 +476,7 @@ function extractAtImports(content: string): readonly string[] {
       imports.push(importPath);
     }
 
-    match = regex.exec(content);
+    match = regex.exec(stripped);
   }
 
   return imports;
