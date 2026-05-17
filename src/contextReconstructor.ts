@@ -74,7 +74,7 @@ export function countTokens(text: string): number {
   return encode(text).length;
 }
 
-export function clearContextBreakdownCache(): void {
+export function clearAllContextCaches(): void {
   cache.clear();
   inFlight.clear();
   textFileCache.clear();
@@ -525,8 +525,8 @@ function extractAtImports(content: string): readonly string[] {
   return imports;
 }
 
-function cleanImportPath(importPath: string): string {
-  return importPath.trim().replace(/[),.;:!?]+$/g, '');
+export function cleanImportPath(importPath: string): string {
+  return importPath.trim().replace(/[)\]}.,;:!?"'>]+$/g, '');
 }
 
 function resolveImportPath(
