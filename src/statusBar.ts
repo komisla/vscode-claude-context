@@ -16,6 +16,7 @@ export class StatusBarController implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
   private readonly subscriptions: vscode.Disposable[] = [];
   private readonly historicalUsage: HistoricalUsageReader;
+  private disposed = false;
   private historyRefreshTimer: ReturnType<typeof setInterval> | undefined;
   private historyRefreshing: Promise<void> | undefined;
   private latest: ContextUpdate | undefined;
@@ -52,6 +53,7 @@ export class StatusBarController implements vscode.Disposable {
   }
 
   public dispose(): void {
+    this.disposed = true;
     this.stopHistoryTimer();
 
     for (const subscription of this.subscriptions) {
@@ -60,6 +62,10 @@ export class StatusBarController implements vscode.Disposable {
   }
 
   private render(): void {
+    if (this.disposed) {
+      return;
+    }
+
     const config = vscode.workspace.getConfiguration('claudeContext');
     const hideBelow = config.get<number>('hideBelow', 40);
     const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', true);
@@ -100,6 +106,10 @@ export class StatusBarController implements vscode.Disposable {
   }
 
   private startHistoryTimerIfNeeded(): void {
+    if (this.disposed) {
+      return;
+    }
+
     if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
       this.stopHistoryTimer();
       this.latestHistory = undefined;
@@ -122,6 +132,10 @@ export class StatusBarController implements vscode.Disposable {
   }
 
   private scheduleHistoryRefresh(): void {
+    if (this.disposed) {
+      return;
+    }
+
     if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
       this.latestHistory = undefined;
       this.stopHistoryTimer();
@@ -135,6 +149,10 @@ export class StatusBarController implements vscode.Disposable {
     this.historyRefreshing = this.historicalUsage
       .refresh(this.getHistoricalUsageBudgets())
       .then((snapshot) => {
+        if (this.disposed) {
+          return;
+        }
+
         this.latestHistory = snapshot;
         this.render();
       })

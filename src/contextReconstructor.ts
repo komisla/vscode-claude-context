@@ -1,6 +1,7 @@
-import { promises as fsp } from 'fs';
+import { createReadStream, promises as fsp } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createInterface } from 'readline';
 import { encode } from 'gpt-tokenizer';
 import type { ContextUpdate } from './dataSource';
 
@@ -8,6 +9,7 @@ export const CC_BASE_SYSTEM_PROMPT_TOKENS = 8_000; // measured on CC v2.1.143, 2
 export const TOKENS_PER_BUILTIN_TOOL = 300;
 export const TOKENS_PER_MCP_TOOL = 400;
 export const BREAKDOWN_CACHE_MS = 30_000;
+const MAX_IMPORTED_CLAUDE_MD_DEPTH = 10;
 
 export interface ContextBreakdownCategories {
   readonly systemPrompt: number;
@@ -86,6 +88,7 @@ export async function reconstructContextBreakdown(
       expiresAt: now + BREAKDOWN_CACHE_MS,
       value: emptyBreakdown
     });
+    pruneExpiredContextBreakdownCache(now);
 
     return emptyBreakdown;
   }
@@ -120,6 +123,7 @@ export async function reconstructContextBreakdown(
       expiresAt: now + BREAKDOWN_CACHE_MS,
       value: breakdown
     });
+    pruneExpiredContextBreakdownCache(now);
 
     return breakdown;
   })();
@@ -179,6 +183,7 @@ export async function countClaudeMdTokens(
     total += await countImportedClaudeMdTokens(
       content,
       filePath,
+      workspaceRoot,
       homeDir,
       new Set([path.resolve(filePath)])
     );
@@ -220,13 +225,12 @@ export async function estimateToolTokens(sessionPath: string | undefined): Promi
     return 0;
   }
 
-  const content = await readTextFile(sessionPath);
+  const activeTools = await readDeferredToolsFromSession(sessionPath);
 
-  if (content === undefined) {
+  if (activeTools === undefined) {
     return 0;
   }
 
-  const activeTools = replayDeferredTools(content);
   let total = 0;
 
   for (const toolName of activeTools) {
@@ -240,37 +244,7 @@ export function replayDeferredTools(jsonl: string): ReadonlySet<string> {
   const activeTools = new Set<string>();
 
   for (const lineText of jsonl.split(/\r?\n/)) {
-    if (lineText.trim() === '') {
-      continue;
-    }
-
-    let line: unknown;
-
-    try {
-      line = JSON.parse(lineText) as unknown;
-    } catch {
-      continue;
-    }
-
-    if (isRecord(line) && line.isSidechain === true) {
-      continue;
-    }
-
-    if (!isDeferredToolsDelta(line)) {
-      continue;
-    }
-
-    for (const name of getStringArray(line.attachment.addedNames)) {
-      activeTools.add(name);
-    }
-
-    for (const name of getStringArray(line.attachment.removedNames)) {
-      activeTools.delete(name);
-    }
-
-    for (const name of getStringArray(line.attachment.readdedNames)) {
-      activeTools.add(name);
-    }
+    applyDeferredToolsDeltaLine(activeTools, lineText);
   }
 
   return activeTools;
@@ -328,9 +302,15 @@ function getClaudeMdPathsUpTree(workspaceRoot: string): readonly string[] {
 async function countImportedClaudeMdTokens(
   content: string,
   sourcePath: string,
+  workspaceRoot: string | undefined,
   homeDir: string,
-  visited: Set<string>
+  visited: Set<string>,
+  depth = 1
 ): Promise<number> {
+  if (depth > MAX_IMPORTED_CLAUDE_MD_DEPTH) {
+    return 0;
+  }
+
   let total = 0;
   const sourceDir = path.dirname(sourcePath);
 
@@ -342,6 +322,10 @@ async function countImportedClaudeMdTokens(
     }
 
     const normalizedPath = path.resolve(resolvedPath);
+
+    if (!isAllowedClaudeMdImport(normalizedPath, workspaceRoot, homeDir)) {
+      continue;
+    }
 
     if (visited.has(normalizedPath)) {
       continue;
@@ -358,8 +342,10 @@ async function countImportedClaudeMdTokens(
     total += await countImportedClaudeMdTokens(
       importedContent,
       normalizedPath,
+      workspaceRoot,
       homeDir,
-      visited
+      visited,
+      depth + 1
     );
   }
 
@@ -417,6 +403,92 @@ async function readTextFile(filePath: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+async function readDeferredToolsFromSession(
+  sessionPath: string
+): Promise<ReadonlySet<string> | undefined> {
+  const activeTools = new Set<string>();
+
+  try {
+    const stream = createReadStream(sessionPath, { encoding: 'utf8' });
+    const rl = createInterface({
+      input: stream,
+      crlfDelay: Infinity
+    });
+
+    try {
+      for await (const lineText of rl) {
+        applyDeferredToolsDeltaLine(activeTools, lineText);
+      }
+    } finally {
+      rl.close();
+    }
+  } catch {
+    return undefined;
+  }
+
+  return activeTools;
+}
+
+function applyDeferredToolsDeltaLine(activeTools: Set<string>, lineText: string): void {
+  if (lineText.trim() === '') {
+    return;
+  }
+
+  let line: unknown;
+
+  try {
+    line = JSON.parse(lineText) as unknown;
+  } catch {
+    return;
+  }
+
+  if (isRecord(line) && line.isSidechain === true) {
+    return;
+  }
+
+  if (!isDeferredToolsDelta(line)) {
+    return;
+  }
+
+  for (const name of getStringArray(line.attachment.addedNames)) {
+    activeTools.add(name);
+  }
+
+  for (const name of getStringArray(line.attachment.removedNames)) {
+    activeTools.delete(name);
+  }
+
+  for (const name of getStringArray(line.attachment.readdedNames)) {
+    activeTools.add(name);
+  }
+}
+
+function pruneExpiredContextBreakdownCache(now: number): void {
+  for (const entry of cache.values()) {
+    if (entry.expiresAt <= now) {
+      cache.delete(entry.key);
+    }
+  }
+}
+
+function isAllowedClaudeMdImport(
+  resolvedPath: string,
+  workspaceRoot: string | undefined,
+  homeDir: string
+): boolean {
+  return (
+    isPathWithinRoot(resolvedPath, homeDir) ||
+    (workspaceRoot !== undefined && isPathWithinRoot(resolvedPath, workspaceRoot))
+  );
+}
+
+function isPathWithinRoot(candidatePath: string, root: string): boolean {
+  const resolvedRoot = path.resolve(root);
+  const relative = path.relative(resolvedRoot, candidatePath);
+
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function getStringArray(value: unknown): readonly string[] {

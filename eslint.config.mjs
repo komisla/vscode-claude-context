@@ -34,6 +34,14 @@ export default [
     }
   },
   {
+    files: ['src/test/**/*.cjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node
+      }
+    }
+  },
+  {
     files: ['webpack.config.js'],
     languageOptions: {
       globals: {
