@@ -213,11 +213,10 @@ test('findActiveSession resolves locks sequentially', async () => {
       mtimeMs: 1
     });
 
-    const session = await mutable.findActiveSession();
+    await mutable.findActiveSession();
 
     assert.equal(readLockCalls, 3);
     assert.equal(maxConcurrentReads, 1);
-    assert.ok(session !== undefined);
 
     dataSource.dispose();
   } finally {

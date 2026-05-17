@@ -30,6 +30,12 @@ interface JsonlCandidate {
 interface ResolvedLockSession {
   readonly projectDir: string;
   readonly jsonlPath: string;
+  readonly lockMtimeMs: number;
+  readonly jsonlMtimeMs: number;
+}
+
+interface CachedFileMeta {
+  readonly size: number;
   readonly mtimeMs: number;
 }
 
@@ -166,6 +172,7 @@ export class JsonlTailDataSource implements ContextDataSource {
   private currentProjectDir: string | undefined;
   private readonly offsets = new Map<string, number>();
   private readonly remainders = new Map<string, string>();
+  private readonly fileMeta = new Map<string, CachedFileMeta>();
   private readonly lockCache = new Map<string, CachedLockFile>();
   private ideDirectoryCache: CachedIdeDirectory | undefined;
   private disposed = false;
@@ -345,6 +352,7 @@ export class JsonlTailDataSource implements ContextDataSource {
 
     this.tickTimer = setTimeout(() => {
       this.tickTimer = undefined;
+      this.lastTickAt = Date.now();
       void this.refreshActiveSession();
     }, delayMs);
   }
@@ -359,7 +367,6 @@ export class JsonlTailDataSource implements ContextDataSource {
         this.emitUpdate({ error: SESSION_NOT_FOUND_ERROR });
       })
       .finally(() => {
-        this.lastTickAt = Date.now();
         this.refreshing = undefined;
       });
 
@@ -420,19 +427,35 @@ export class JsonlTailDataSource implements ContextDataSource {
         continue;
       }
 
+      let lockStats: fs.Stats;
+
+      try {
+        lockStats = await fsp.stat(lockPath);
+      } catch {
+        lockResults.push(undefined);
+        continue;
+      }
+
       lockResults.push({
         projectDir,
         jsonlPath: jsonl.path,
-        mtimeMs: jsonl.mtimeMs
+        lockMtimeMs: lockStats.mtimeMs,
+        jsonlMtimeMs: jsonl.mtimeMs
       });
     }
 
     let bestSession: ActiveSession | undefined;
-    let bestMtimeMs = -1;
+    let bestLockMtimeMs = -1;
+    let bestJsonlMtimeMs = -1;
 
     for (const result of lockResults) {
-      if (result !== undefined && result.mtimeMs > bestMtimeMs) {
-        bestMtimeMs = result.mtimeMs;
+      if (
+        result !== undefined &&
+        (result.lockMtimeMs > bestLockMtimeMs ||
+          (result.lockMtimeMs === bestLockMtimeMs && result.jsonlMtimeMs > bestJsonlMtimeMs))
+      ) {
+        bestLockMtimeMs = result.lockMtimeMs;
+        bestJsonlMtimeMs = result.jsonlMtimeMs;
         bestSession = {
           projectDir: result.projectDir,
           jsonlPath: result.jsonlPath
@@ -568,24 +591,34 @@ export class JsonlTailDataSource implements ContextDataSource {
     try {
       stats = await fsp.stat(filePath);
     } catch {
+      this.offsets.delete(filePath);
+      this.remainders.delete(filePath);
+      this.fileMeta.delete(filePath);
       this.emitUpdate({ error: SESSION_NOT_FOUND_ERROR });
       return;
     }
 
+    const previousMeta = this.fileMeta.get(filePath);
+    const truncated =
+      previousMeta !== undefined &&
+      (stats.size < previousMeta.size || stats.mtimeMs < previousMeta.mtimeMs);
+
     if (!this.offsets.has(filePath)) {
       // Seed the offset at EOF on first encounter so we only read future appends.
       this.offsets.set(filePath, stats.size);
+      this.fileMeta.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs });
       return;
     }
 
     const previousOffset = this.offsets.get(filePath) ?? 0;
-    const truncated = stats.size < previousOffset;
 
     if (truncated) {
+      this.offsets.set(filePath, 0);
       this.remainders.delete(filePath);
     }
 
     const offset = truncated ? 0 : previousOffset;
+    this.fileMeta.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs });
 
     if (stats.size === offset) {
       return;
