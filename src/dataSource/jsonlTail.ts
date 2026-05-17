@@ -68,7 +68,10 @@ export const MODEL_TABLE: Readonly<Record<string, ModelLimits>> = {
 };
 
 export function slugify(cwd: string): string {
-  return cwd.replace(/:/g, '-').replace(/[/\\]/g, '-');
+  // Claude Code stores per-project session JSONLs under ~/.claude/projects/<slug>/.
+  // The slug is derived from the workspace cwd by replacing path separators, drive-letter
+  // colons, AND whitespace with '-' — matching Claude Code's own on-disk naming.
+  return cwd.replace(/:/g, '-').replace(/[/\\]/g, '-').replace(/\s+/g, '-');
 }
 
 export function isAssistantTurn(line: unknown): boolean {
