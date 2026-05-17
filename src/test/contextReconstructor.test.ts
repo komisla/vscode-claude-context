@@ -123,6 +123,38 @@ test('bare @name.md references are ignored during CLAUDE.md import counting', as
   }
 });
 
+test('ignores imports inside comments and code blocks during CLAUDE.md import counting', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-comment-import-'));
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    await mkdir(workspaceRoot, { recursive: true });
+
+    const workspaceClaude = [
+      'workspace rules',
+      '<!-- @./commented.md -->',
+      '```md',
+      '@./fenced.md',
+      '```',
+      'Use `@./inline.md` for examples',
+      '@./active.md'
+    ].join('\n');
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+    await writeFile(path.join(workspaceRoot, 'commented.md'), 'commented import should not count');
+    await writeFile(path.join(workspaceRoot, 'fenced.md'), 'fenced import should not count');
+    await writeFile(path.join(workspaceRoot, 'inline.md'), 'inline import should not count');
+    await writeFile(path.join(workspaceRoot, 'active.md'), 'active import should count');
+
+    const expected = countTokens(workspaceClaude) + countTokens('active import should count');
+
+    assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('recursively counts nested CLAUDE.md imports and stops on cycles', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-nested-'));
 
@@ -546,6 +578,130 @@ test('reconstructor invalidates when CLAUDE.md mtime changes', async () => {
     assert.equal(claudeMdReadCount, 2);
   } finally {
     mutableFsPromises.readFile = originalReadFile;
+    clearContextBreakdownCache();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('reconstructor prunes expired cache entries on cache hits', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-prune-hit-'));
+  clearContextBreakdownCache();
+
+  const homeDir = path.join(root, 'home');
+  const claudeDir = path.join(homeDir, '.claude');
+  const workspaceRoot = path.join(root, 'repo', 'app');
+  await mkdir(claudeDir, { recursive: true });
+  await mkdir(workspaceRoot, { recursive: true });
+  await writeFile(path.join(claudeDir, 'CLAUDE.md'), 'shared content');
+  await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), 'workspace content');
+
+  const mutableMapPrototype = Map.prototype as unknown as {
+    delete: (this: Map<unknown, unknown>, key: unknown) => boolean;
+  };
+  const originalDelete = mutableMapPrototype.delete;
+  let deleteCount = 0;
+
+  mutableMapPrototype.delete = function (this: Map<unknown, unknown>, key: unknown): boolean {
+    deleteCount += 1;
+    return originalDelete.call(this, key);
+  };
+
+  try {
+    const firstSource = {
+      totalTokens: 5_000,
+      effectiveWindow: 178_808,
+      fillPercent: 3
+    } satisfies ContextUpdate;
+    const secondSource = {
+      totalTokens: 6_000,
+      effectiveWindow: 178_808,
+      fillPercent: 4
+    } satisfies ContextUpdate;
+
+    await reconstructContextBreakdown(firstSource, {
+      workspaceRoot,
+      homeDir,
+      now: () => 1_000
+    });
+
+    await reconstructContextBreakdown(secondSource, {
+      workspaceRoot,
+      homeDir,
+      now: () => 50_000
+    });
+
+    deleteCount = 0;
+
+    const cached = await reconstructContextBreakdown(secondSource, {
+      workspaceRoot,
+      homeDir,
+      now: () => 61_000
+    });
+
+    assert.equal(cached.totalTokens, 6_000);
+    assert.ok(deleteCount > 0);
+  } finally {
+    mutableMapPrototype.delete = originalDelete;
+    clearContextBreakdownCache();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('reconstructor caches missing CLAUDE.md fingerprints between ticks', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-fingerprint-cache-'));
+  clearContextBreakdownCache();
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const claudeDir = path.join(homeDir, '.claude');
+    const workspaceRoot = path.join(root, 'repo', 'a', 'b', 'c', 'd', 'workspace');
+    await mkdir(claudeDir, { recursive: true });
+    await mkdir(workspaceRoot, { recursive: true });
+    await writeFile(path.join(claudeDir, 'CLAUDE.md'), 'shared content');
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), 'workspace content');
+
+    const mutableFsPromises = fsPromises as {
+      stat: (...args: unknown[]) => Promise<unknown>;
+    };
+    const originalStat = mutableFsPromises.stat;
+    let statCalls = 0;
+
+    mutableFsPromises.stat = async (...args: unknown[]) => {
+      statCalls += 1;
+      return originalStat(...args);
+    };
+
+    try {
+      const source = {
+        totalTokens: 5_000,
+        effectiveWindow: 178_808,
+        fillPercent: 3
+      } satisfies ContextUpdate;
+
+      await reconstructContextBreakdown(source, {
+        workspaceRoot,
+        homeDir,
+        now: () => 1_000
+      });
+      const afterFirst = statCalls;
+
+      await reconstructContextBreakdown(source, {
+        workspaceRoot,
+        homeDir,
+        now: () => 2_000
+      });
+      const afterSecond = statCalls;
+
+      const firstIncrement = afterFirst;
+      const secondIncrement = afterSecond - afterFirst;
+
+      assert.ok(firstIncrement > 4);
+      assert.ok(secondIncrement < firstIncrement);
+      assert.ok(secondIncrement <= 4);
+    } finally {
+      mutableFsPromises.stat = originalStat;
+    }
+  } finally {
     clearContextBreakdownCache();
     await rm(root, { recursive: true, force: true });
   }

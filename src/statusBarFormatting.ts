@@ -65,7 +65,7 @@ export function buildTooltipText(options: BuildTooltipTextOptions): string {
 
   lines.push('Token counts use GPT-tokenizer approximation.');
   lines.push('Click for breakdown and details');
-  return lines.join('\n');
+  return lines.join('\n\n');
 }
 
 function formatCompactMagnitude(value: number): string {

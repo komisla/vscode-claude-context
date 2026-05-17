@@ -32,4 +32,5 @@ test('buildTooltipText includes context, history and call to action', () => {
   assert.match(text, /Context high - run `\/compact` or start a new chat/);
   assert.match(text, /Token counts use GPT-tokenizer approximation\./);
   assert.match(text, /Click for breakdown and details/);
+  assert.match(text, /Context: 72% \(100m \/ 200k tokens\)\n\nLast 5h: 12% of budget/);
 });

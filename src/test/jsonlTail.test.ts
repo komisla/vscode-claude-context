@@ -2,7 +2,7 @@ import type * as fs from 'fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp } from 'fs';
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from 'fs/promises';
 import { setTimeout as delay } from 'timers/promises';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -41,6 +41,29 @@ function createMockVscode(workspaceFolders: readonly string[]): typeof import('v
       }))
     }
   } as unknown as typeof import('vscode');
+}
+
+class FakeWatcher {
+  public closed = 0;
+  private errorListener: ((err: Error) => void) | undefined;
+
+  public constructor(public readonly dir: string) {}
+
+  public on(event: string, listener: (err: Error) => void): this {
+    if (event === 'error') {
+      this.errorListener = listener;
+    }
+
+    return this;
+  }
+
+  public close(): void {
+    this.closed += 1;
+  }
+
+  public emitError(message: string): void {
+    this.errorListener?.(new Error(message));
+  }
 }
 
 test('readLockFiles prunes stale cache entries on cache hit', async () => {
@@ -272,65 +295,93 @@ test('findActiveSession prefers the newest lock file when jsonl mtimes disagree'
   }
 });
 
-test('JsonlTailDataSource clears watcher references and retries after fs.watch errors', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-watcher-error-'));
+test('findActiveSession breaks equal mtime ties by lock path', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-lock-tie-'));
   const homeDir = path.join(root, 'home');
   const claudeRoot = path.join(homeDir, '.claude');
   const ideRoot = path.join(claudeRoot, 'ide');
+  const workspaceA = path.join(root, 'workspace-a');
+  const workspaceB = path.join(root, 'workspace-b');
+  const projectA = path.join(claudeRoot, 'projects', slugify(workspaceA));
+  const projectB = path.join(claudeRoot, 'projects', slugify(workspaceB));
+  const jsonlA = path.join(projectA, 'session.jsonl');
+  const jsonlB = path.join(projectB, 'session.jsonl');
+  const lockA = path.join(ideRoot, 'a.lock');
+  const lockB = path.join(ideRoot, 'b.lock');
 
   await mkdir(ideRoot, { recursive: true });
-
-  const scheduledRefreshes: number[] = [];
-  const watchCalls: string[] = [];
-
-  class FakeWatcher {
-    public closed = 0;
-    private errorListener: ((err: Error) => void) | undefined;
-
-    public constructor(public readonly dir: string) {}
-
-    public on(event: string, listener: (err: Error) => void): this {
-      if (event === 'error') {
-        this.errorListener = listener;
-      }
-
-      return this;
-    }
-
-    public close(): void {
-      this.closed += 1;
-    }
-
-    public emitError(message: string): void {
-      this.errorListener?.(new Error(message));
-    }
-  }
+  await mkdir(projectA, { recursive: true });
+  await mkdir(projectB, { recursive: true });
 
   const originalEnv = snapshotProcessEnv();
   applyClaudeHome(homeDir);
+
+  await writeFile(lockA, JSON.stringify({ workspaceFolders: [workspaceA] }));
+  await writeFile(lockB, JSON.stringify({ workspaceFolders: [workspaceB] }));
+  await writeFile(jsonlA, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 40))}\n`);
+  await writeFile(jsonlB, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 40))}\n`);
+
+  const sameTime = new Date('2026-05-16T11:00:00Z');
+  await utimes(lockA, sameTime, sameTime);
+  await utimes(lockB, sameTime, sameTime);
+  await utimes(jsonlA, sameTime, sameTime);
+  await utimes(jsonlB, sameTime, sameTime);
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([workspaceA, workspaceB]));
+
+  try {
+    await delay(25);
+
+    const mutable = dataSource as unknown as {
+      readLockFiles: () => Promise<string[]>;
+      findActiveSession: () => Promise<{ readonly projectDir: string; readonly jsonlPath: string } | undefined>;
+    };
+
+    mutable.readLockFiles = async () => [lockB, lockA];
+
+    const session = await mutable.findActiveSession();
+
+    assert.equal(session?.projectDir, projectA);
+    assert.equal(session?.jsonlPath, jsonlA);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource project watcher errors do not clear root watchers', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-project-error-');
+  const originalEnv = snapshotProcessEnv();
+  const scheduledRefreshes: number[] = [];
+  const watchCalls: string[] = [];
+  const watchers = new Map<string, FakeWatcher>();
+
+  applyClaudeHome(fixture.homeDir);
   const fakeWatch = ((dir: string, listener: (event: string, filename: string | Buffer | null) => void) => {
     void listener;
     watchCalls.push(dir);
-    return new FakeWatcher(dir) as unknown as fs.FSWatcher;
+    const watcher = new FakeWatcher(dir);
+    watchers.set(dir, watcher);
+    return watcher as unknown as fs.FSWatcher;
   }) as typeof fs.watch;
 
   let dataSource: JsonlTailDataSource | undefined;
 
   try {
-    dataSource = new JsonlTailDataSource(createMockVscode([]), fakeWatch);
+    dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]), fakeWatch);
     const mutable = dataSource as unknown as {
       claudeRootWatcher: FakeWatcher | undefined;
       ideWatcher: FakeWatcher | undefined;
       projectWatcher: FakeWatcher | undefined;
+      watchProjectDir: (dir: string) => void;
       scheduleRefresh: (delayMs: number) => void;
-      refreshActiveSessionCore: () => Promise<void>;
     };
 
     await delay(25);
 
     const rootWatcher = mutable.claudeRootWatcher;
     const ideWatcher = mutable.ideWatcher;
-
     assert.ok(rootWatcher !== undefined);
     assert.ok(ideWatcher !== undefined);
 
@@ -338,29 +389,113 @@ test('JsonlTailDataSource clears watcher references and retries after fs.watch e
       scheduledRefreshes.push(delayMs);
     };
 
-    mutable.claudeRootWatcher = rootWatcher;
-    mutable.ideWatcher = rootWatcher;
-    mutable.projectWatcher = rootWatcher;
+    mutable.watchProjectDir(fixture.projectRoot);
+    await delay(25);
+
+    const projectWatcher = mutable.projectWatcher;
+    assert.ok(projectWatcher !== undefined);
+    projectWatcher.emitError('project dir removed');
+
+    assert.equal(projectWatcher.closed, 1);
+    assert.equal(mutable.projectWatcher, undefined);
+    assert.equal(mutable.claudeRootWatcher, rootWatcher);
+    assert.equal(mutable.ideWatcher, ideWatcher);
+    assert.deepEqual(scheduledRefreshes, [30_000]);
+    assert.ok(watchCalls.includes(fixture.projectRoot));
+  } finally {
+    dataSource?.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource claude root watcher errors only clear the root watcher', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-root-error-');
+  const originalEnv = snapshotProcessEnv();
+  const scheduledRefreshes: number[] = [];
+
+  applyClaudeHome(fixture.homeDir);
+  const fakeWatch = ((dir: string, listener: (event: string, filename: string | Buffer | null) => void) => {
+    void listener;
+    return new FakeWatcher(dir) as unknown as fs.FSWatcher;
+  }) as typeof fs.watch;
+
+  let dataSource: JsonlTailDataSource | undefined;
+
+  try {
+    dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]), fakeWatch);
+    const mutable = dataSource as unknown as {
+      claudeRootWatcher: FakeWatcher | undefined;
+      ideWatcher: FakeWatcher | undefined;
+      scheduleRefresh: (delayMs: number) => void;
+    };
+
+    await delay(25);
+
+    const rootWatcher = mutable.claudeRootWatcher;
+    const ideWatcher = mutable.ideWatcher;
+    assert.ok(rootWatcher !== undefined);
+    assert.ok(ideWatcher !== undefined);
+
+    mutable.scheduleRefresh = (delayMs: number) => {
+      scheduledRefreshes.push(delayMs);
+    };
 
     rootWatcher.emitError('directory removed');
 
     assert.equal(rootWatcher.closed, 1);
     assert.equal(mutable.claudeRootWatcher, undefined);
-    assert.equal(mutable.ideWatcher, undefined);
-    assert.equal(mutable.projectWatcher, undefined);
-    assert.deepEqual(scheduledRefreshes, [30_000]);
-
-    const watchCountAfterError = watchCalls.length;
-    await mutable.refreshActiveSessionCore();
-    await delay(25);
-
-    assert.ok(watchCalls.length >= watchCountAfterError + 2);
-    assert.ok(mutable.claudeRootWatcher !== undefined);
-    assert.ok(mutable.ideWatcher !== undefined);
+    assert.equal(mutable.ideWatcher, ideWatcher);
+    assert.deepEqual(scheduledRefreshes, [60_000]);
   } finally {
     dataSource?.dispose();
     restoreProcessEnv(originalEnv);
-    await rm(root, { recursive: true, force: true });
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource ide watcher errors only clear the ide watcher', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-ide-error-');
+  const originalEnv = snapshotProcessEnv();
+  const scheduledRefreshes: number[] = [];
+
+  applyClaudeHome(fixture.homeDir);
+  const fakeWatch = ((dir: string, listener: (event: string, filename: string | Buffer | null) => void) => {
+    void listener;
+    return new FakeWatcher(dir) as unknown as fs.FSWatcher;
+  }) as typeof fs.watch;
+
+  let dataSource: JsonlTailDataSource | undefined;
+
+  try {
+    dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]), fakeWatch);
+    const mutable = dataSource as unknown as {
+      claudeRootWatcher: FakeWatcher | undefined;
+      ideWatcher: FakeWatcher | undefined;
+      scheduleRefresh: (delayMs: number) => void;
+    };
+
+    await delay(25);
+
+    const rootWatcher = mutable.claudeRootWatcher;
+    const ideWatcher = mutable.ideWatcher;
+    assert.ok(rootWatcher !== undefined);
+    assert.ok(ideWatcher !== undefined);
+
+    mutable.scheduleRefresh = (delayMs: number) => {
+      scheduledRefreshes.push(delayMs);
+    };
+
+    ideWatcher.emitError('ide dir removed');
+
+    assert.equal(ideWatcher.closed, 1);
+    assert.equal(mutable.claudeRootWatcher, rootWatcher);
+    assert.equal(mutable.ideWatcher, undefined);
+    assert.deepEqual(scheduledRefreshes, [30_000]);
+  } finally {
+    dataSource?.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
   }
 });
 
