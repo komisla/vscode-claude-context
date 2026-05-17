@@ -211,6 +211,28 @@ test('historical reader ignores touch-only mtime changes when file size is uncha
   }
 });
 
+test('historical reader prunes stale cached entries on cache hits', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-prune-'));
+
+  try {
+    const filePath = path.join(root, 'session.jsonl');
+    await writeFile(filePath, `${JSON.stringify(makeAssistantLine('2026-05-10T12:00:00Z', 100))}\n`);
+
+    const reader = new HistoricalUsageReader(root);
+    const first = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    assert.equal(first.tokens7d, 100);
+    assert.equal(first.hasData, true);
+
+    const later = Date.parse('2026-05-24T12:00:00Z');
+    const second = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, later);
+
+    assert.equal(second.tokens7d, 0);
+    assert.equal(second.hasData, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('historical reader deduplicates concurrent refresh work', async () => {
   const reader = new HistoricalUsageReader(path.join(tmpdir(), 'claude-history-inflight-root'));
   const mutable = reader as unknown as {
