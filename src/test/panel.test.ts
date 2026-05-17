@@ -62,6 +62,18 @@ async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const startedAt = Date.now();
+
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error('Timed out waiting for panel state');
+    }
+
+    await flush();
+  }
+}
+
 test('BreakdownPanel throttles historical usage refreshes', async () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
@@ -135,7 +147,7 @@ test('BreakdownPanel tears down subscriptions when the panel closes', async () =
   assert.equal(vscodeMock.window.webviewPanels.length, 1);
   const mockPanel = vscodeMock.window.webviewPanels[0];
 
-  await flush();
+  await waitFor(() => mockPanel.postedMessages.length === 1);
   assert.equal(mockPanel.postedMessages.length, 1);
 
   mockPanel.dispose();

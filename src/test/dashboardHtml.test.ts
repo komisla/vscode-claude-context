@@ -26,6 +26,7 @@ test('dashboard includes issue 4 research links and heuristic wording', async ()
     /https:\/\/support\.claude\.com\/en\/articles\/14552983-models-usage-and-limits-in-claude-code/
   );
   assert.match(html, /used_percentage = input_tokens \+[\s\S]*cache_creation \+ cache_read/);
+  assert.match(html, /GPT-tokenizer approximation/);
 });
 
 test('dashboard relies on VS Code message passing instead of webview storage', async () => {

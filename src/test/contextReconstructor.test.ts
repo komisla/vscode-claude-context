@@ -374,6 +374,62 @@ test('reconstructor reuses the cache for equivalent sources with different prope
   }
 });
 
+test('reconstructor reuses cached CLAUDE.md snapshots when only the source changes', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-snapshot-cache-'));
+  clearContextBreakdownCache();
+
+  const homeDir = path.join(root, 'home');
+  const claudeDir = path.join(homeDir, '.claude');
+  await mkdir(claudeDir, { recursive: true });
+  await writeFile(path.join(claudeDir, 'CLAUDE.md'), 'shared content');
+
+  const mutableFsPromises = fsPromises as {
+    readFile: (...args: unknown[]) => Promise<unknown>;
+  };
+  const originalReadFile = mutableFsPromises.readFile;
+  let claudeMdReadCount = 0;
+
+  mutableFsPromises.readFile = async (...args: unknown[]) => {
+    const [filePath] = args;
+
+    if (typeof filePath === 'string' && filePath.endsWith(path.join('.claude', 'CLAUDE.md'))) {
+      claudeMdReadCount += 1;
+    }
+
+    return originalReadFile(...args);
+  };
+
+  try {
+    const firstSource = {
+      totalTokens: 5_000,
+      effectiveWindow: 178_808,
+      fillPercent: 3
+    } satisfies ContextUpdate;
+    const secondSource = {
+      totalTokens: 6_000,
+      effectiveWindow: 178_808,
+      fillPercent: 3
+    } satisfies ContextUpdate;
+
+    const first = await reconstructContextBreakdown(firstSource, {
+      homeDir,
+      now: () => 1_000
+    });
+    const second = await reconstructContextBreakdown(secondSource, {
+      homeDir,
+      now: () => 2_000
+    });
+
+    assert.equal(first.categories.claudeMd, countTokens('shared content'));
+    assert.equal(second.categories.claudeMd, countTokens('shared content'));
+    assert.equal(claudeMdReadCount, 1);
+  } finally {
+    mutableFsPromises.readFile = originalReadFile;
+    clearContextBreakdownCache();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('reconstructor invalidates when CLAUDE.md mtime changes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-mtime-'));
   clearContextBreakdownCache();
