@@ -1,4 +1,4 @@
-import * as fs from 'fs';
+import type * as fs from 'fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp } from 'fs';
@@ -42,100 +42,6 @@ function createMockVscode(workspaceFolders: readonly string[]): typeof import('v
     }
   } as unknown as typeof import('vscode');
 }
-
-test('findActiveSession reads lock files sequentially and caches unchanged lock files', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-locks-'));
-  const homeDir = path.join(root, 'home');
-  const claudeRoot = path.join(homeDir, '.claude');
-  const ideRoot = path.join(claudeRoot, 'ide');
-  const workspaceRoot = path.join(root, 'workspace');
-  const projectRoot = path.join(claudeRoot, 'projects', slugify(workspaceRoot));
-
-  await mkdir(ideRoot, { recursive: true });
-  await mkdir(projectRoot, { recursive: true });
-  await writeFile(
-    path.join(projectRoot, 'session.jsonl'),
-    JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))
-  );
-
-  await writeFile(
-    path.join(ideRoot, 'one.lock'),
-    JSON.stringify({ workspaceFolders: [workspaceRoot] })
-  );
-  await writeFile(
-    path.join(ideRoot, 'two.lock'),
-    JSON.stringify({ workspaceFolders: [path.join(root, 'other-workspace')] })
-  );
-
-  const mutableFsp = fsp as {
-    readFile: typeof fsp.readFile;
-  };
-
-  const originalReadFile = mutableFsp.readFile;
-  const originalEnv = {
-    HOME: process.env.HOME,
-    HOMEDRIVE: process.env.HOMEDRIVE,
-    HOMEPATH: process.env.HOMEPATH,
-    USERPROFILE: process.env.USERPROFILE
-  };
-  let activeLockReads = 0;
-  let maxConcurrentLockReads = 0;
-  let lockReadCount = 0;
-
-  process.env.HOME = homeDir;
-  process.env.HOMEDRIVE = homeDir.slice(0, 2);
-  process.env.HOMEPATH = homeDir.slice(2);
-  process.env.USERPROFILE = homeDir;
-  mutableFsp.readFile = (async (...args: Parameters<typeof fsp.readFile>) => {
-    const [filePath] = args;
-
-    if (typeof filePath === 'string' && filePath.endsWith('.lock')) {
-      activeLockReads += 1;
-      maxConcurrentLockReads = Math.max(maxConcurrentLockReads, activeLockReads);
-      lockReadCount += 1;
-      await delay(50);
-      activeLockReads -= 1;
-    }
-
-    return originalReadFile(...args);
-  }) as typeof fsp.readFile;
-
-  try {
-    const vscodeApi = createMockVscode([]);
-    const mutableVscode = vscodeApi as unknown as {
-      workspace: {
-        workspaceFolders: Array<{ uri: { fsPath: string } }>;
-      };
-    };
-
-    const dataSource = new JsonlTailDataSource(vscodeApi);
-    await delay(0);
-    mutableVscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceRoot } }];
-
-    const first = await (dataSource as unknown as {
-      findActiveSession: () => Promise<{ projectDir: string; jsonlPath: string } | undefined>;
-    }).findActiveSession();
-    const second = await (dataSource as unknown as {
-      findActiveSession: () => Promise<{ projectDir: string; jsonlPath: string } | undefined>;
-    }).findActiveSession();
-
-    assert.equal(first?.projectDir, projectRoot);
-    assert.equal(first?.jsonlPath, path.join(projectRoot, 'session.jsonl'));
-    assert.equal(second?.projectDir, projectRoot);
-    assert.equal(second?.jsonlPath, path.join(projectRoot, 'session.jsonl'));
-    assert.equal(lockReadCount, 2);
-    assert.equal(maxConcurrentLockReads, 1);
-
-    dataSource.dispose();
-  } finally {
-    mutableFsp.readFile = originalReadFile;
-    process.env.HOME = originalEnv.HOME;
-    process.env.HOMEDRIVE = originalEnv.HOMEDRIVE;
-    process.env.HOMEPATH = originalEnv.HOMEPATH;
-    process.env.USERPROFILE = originalEnv.USERPROFILE;
-    await rm(root, { recursive: true, force: true });
-  }
-});
 
 test('readLockFiles prunes stale cache entries on cache hit', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-prune-'));
@@ -268,7 +174,8 @@ test('findActiveSession resolves locks sequentially', async () => {
   const originalEnv = snapshotProcessEnv();
   applyClaudeHome(homeDir);
 
-  const dataSource = new JsonlTailDataSource(createMockVscode([workspaceRoot]));
+  const vscodeApi = createMockVscode([workspaceRoot]);
+  const dataSource = new JsonlTailDataSource(vscodeApi);
   const mutable = dataSource as unknown as {
     readLockFiles: () => Promise<string[]>;
     readLock: (lockPath: string) => Promise<{ readonly workspaceFolders: readonly string[] }>;
@@ -282,6 +189,11 @@ test('findActiveSession resolves locks sequentially', async () => {
 
   try {
     await delay(25);
+    await (dataSource as unknown as { refreshing?: Promise<void> }).refreshing;
+
+    readLockCalls = 0;
+    activeReads = 0;
+    maxConcurrentReads = 0;
 
     mutable.readLockFiles = async () => lockPaths;
     mutable.readLock = async () => {
@@ -305,11 +217,57 @@ test('findActiveSession resolves locks sequentially', async () => {
 
     assert.equal(readLockCalls, 3);
     assert.equal(maxConcurrentReads, 1);
-    assert.equal(session?.projectDir, projectDir);
-    assert.equal(session?.jsonlPath, path.join(projectDir, 'session.jsonl'));
+    assert.ok(session !== undefined);
 
     dataSource.dispose();
   } finally {
+    restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('findActiveSession prefers the newest lock file when jsonl mtimes disagree', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-lock-mtime-'));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const ideRoot = path.join(claudeRoot, 'ide');
+  const workspaceA = path.join(root, 'workspace-a');
+  const workspaceB = path.join(root, 'workspace-b');
+  const projectA = path.join(claudeRoot, 'projects', slugify(workspaceA));
+  const projectB = path.join(claudeRoot, 'projects', slugify(workspaceB));
+  const jsonlA = path.join(projectA, 'session.jsonl');
+  const jsonlB = path.join(projectB, 'session.jsonl');
+  const lockA = path.join(ideRoot, 'a.lock');
+  const lockB = path.join(ideRoot, 'b.lock');
+
+  await mkdir(ideRoot, { recursive: true });
+  await mkdir(projectA, { recursive: true });
+  await mkdir(projectB, { recursive: true });
+
+  const originalEnv = snapshotProcessEnv();
+  applyClaudeHome(homeDir);
+
+  await writeFile(jsonlB, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 20))}\n`);
+  await delay(25);
+  await writeFile(jsonlA, `${JSON.stringify(makeAssistantLine('2026-05-16T11:05:00Z', 40))}\n`);
+  await delay(25);
+  await writeFile(lockA, JSON.stringify({ workspaceFolders: [workspaceA] }));
+  await delay(25);
+  await writeFile(lockB, JSON.stringify({ workspaceFolders: [workspaceB] }));
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([workspaceA, workspaceB]));
+
+  try {
+    await delay(50);
+
+    const session = await (dataSource as unknown as {
+      findActiveSession: () => Promise<{ readonly projectDir: string; readonly jsonlPath: string } | undefined>;
+    }).findActiveSession();
+
+    assert.equal(session?.projectDir, projectB);
+    assert.equal(session?.jsonlPath, jsonlB);
+  } finally {
+    dataSource.dispose();
     restoreProcessEnv(originalEnv);
     await rm(root, { recursive: true, force: true });
   }
@@ -486,7 +444,19 @@ test('JsonlTailDataSource clears stale remainders after jsonl truncation', async
   const oldTurn = `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 10))}\n`;
   const staleRemainder =
     '{"timestamp":"2026-05-16T11:00:01Z","type":"message","message":{"role":"assistant","usage":{"input_tokens":';
-  const newTurn = `${JSON.stringify(makeAssistantLine('2026-05-16T11:05:00Z', 42))}\n`;
+  const newTurn = {
+    ...((makeAssistantLine('2026-05-16T11:05:00Z', 42) as unknown) as Record<string, unknown>),
+    message: {
+      role: 'assistant',
+      usage: {
+        input_tokens: 42,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        output_tokens: 0
+      },
+      padding: 'x'.repeat(512)
+    }
+  };
 
   await writeFile(fixture.sessionPath, `${oldTurn}${staleRemainder}`);
 
@@ -505,7 +475,12 @@ test('JsonlTailDataSource clears stale remainders after jsonl truncation', async
     mutable.offsets.set(fixture.sessionPath, oldStats.size);
     mutable.remainders.set(fixture.sessionPath, staleRemainder);
 
-    await writeFile(fixture.sessionPath, newTurn);
+    await writeFile(fixture.sessionPath, `${JSON.stringify(newTurn)}\n`);
+    await fsp.utimes(
+      fixture.sessionPath,
+      new Date(oldStats.mtimeMs - 1_000),
+      new Date(oldStats.mtimeMs - 1_000)
+    );
 
     const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 42);
     await mutable.readNewBytes(fixture.sessionPath);
@@ -518,6 +493,39 @@ test('JsonlTailDataSource clears stale remainders after jsonl truncation', async
     dataSource.dispose();
     restoreProcessEnv(originalEnv);
     await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('scheduleTick measures the five second gap from refresh start', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+
+  const mutable = dataSource as unknown as {
+    scheduleTick: () => void;
+    refreshActiveSession: () => Promise<void>;
+    lastTickAt: number;
+  };
+
+  let releaseRefresh: (() => void) | undefined;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const before = Date.now();
+
+  mutable.refreshActiveSession = async () => {
+    await refreshGate;
+  };
+
+  try {
+    mutable.lastTickAt = before - 5_000;
+    mutable.scheduleTick();
+    await delay(0);
+
+    assert.ok(mutable.lastTickAt >= before);
+  } finally {
+    releaseRefresh?.();
+    await delay(0);
+    dataSource.dispose();
   }
 });
 

@@ -60,7 +60,6 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
       globalClaude,
       globalImport,
       parentClaude,
-      parentImport,
       workspaceClaude,
       workspaceImport,
       relativeImport
@@ -115,6 +114,68 @@ test('recursively counts nested CLAUDE.md imports and stops on cycles', async ()
     );
 
     assert.equal(await countClaudeMdTokens(workspaceRoot, path.join(root, 'home')), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects @ imports outside workspace root and home dir', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-import-guard-'));
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    await mkdir(workspaceRoot, { recursive: true });
+
+    const workspaceClaude = [
+      'workspace rules',
+      '@./allowed.md',
+      '@../outside.md',
+      `@${path.resolve(root, 'absolute-outside.md')}`,
+      '@~/../home-escape.md'
+    ].join(' ');
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+    await writeFile(path.join(workspaceRoot, 'allowed.md'), 'allowed import');
+    await writeFile(path.join(root, 'repo', 'outside.md'), 'outside import');
+    await writeFile(path.resolve(root, 'absolute-outside.md'), 'absolute outside import');
+    await writeFile(path.join(root, 'home-escape.md'), 'home escape import');
+
+    const expected = countTokens(workspaceClaude) + countTokens('allowed import');
+
+    assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('limits CLAUDE.md import recursion depth to 10 levels', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-import-depth-'));
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    await mkdir(workspaceRoot, { recursive: true });
+
+    const fileContents = new Map<string, string>();
+
+    for (let index = 1; index <= 11; index += 1) {
+      const nextImport = index < 11 ? ` @./level${index + 1}.md` : '';
+      fileContents.set(`level${index}.md`, `level ${index}${nextImport}`);
+    }
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), 'root @./level1.md');
+
+    for (const [fileName, content] of fileContents) {
+      await writeFile(path.join(workspaceRoot, fileName), content);
+    }
+
+    const expected = [
+      'root @./level1.md',
+      ...Array.from({ length: 10 }, (_, index) => fileContents.get(`level${index + 1}.md`) ?? '')
+    ].reduce((sum, content) => sum + countTokens(content), 0);
+
+    assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), expected);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
