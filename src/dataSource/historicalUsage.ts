@@ -11,6 +11,10 @@ export const DEFAULT_BUDGET_7D = 50_000_000;
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
 
+// Claude projects layout: <projectsRoot>/<slug>/<session>.jsonl (depth 2).
+// Allow one extra level for future sub-directories.
+const MAX_PROJECTS_SCAN_DEPTH = 3;
+
 export interface HistoricalUsageBudgets {
   readonly budget5h: number;
   readonly budget7d: number;
@@ -228,7 +232,7 @@ export class HistoricalUsageReader {
     depth = 0,
     visitedDirectories = new Set<string>()
   ): Promise<string[]> {
-    if (depth > 3) {
+    if (depth > MAX_PROJECTS_SCAN_DEPTH) {
       return [];
     }
 
