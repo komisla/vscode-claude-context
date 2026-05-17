@@ -192,3 +192,34 @@ test('BreakdownPanel falls back when openExternal is unavailable', async () => {
   tracker.source.dispose();
   panel.dispose();
 });
+
+test('BreakdownPanel injects a hex nonce into the webview HTML', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+
+  const historicalUsage = {
+    refresh: async () => makeHistorySnapshot(0, 0)
+  } as unknown as HistoricalUsageReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  panel.open(tracker.source);
+
+  assert.equal(vscodeMock.window.webviewPanels.length, 1);
+  const mockPanel = vscodeMock.window.webviewPanels[0] as unknown as {
+    readonly webview: { readonly html: string };
+  };
+
+  const scriptNonce = mockPanel.webview.html.match(/<script nonce="([0-9a-f]{32})">/);
+  const cspNonce = mockPanel.webview.html.match(/script-src 'nonce-([0-9a-f]{32})'/);
+
+  assert.notEqual(scriptNonce, null);
+  assert.notEqual(cspNonce, null);
+  assert.equal(scriptNonce?.[1], cspNonce?.[1]);
+
+  tracker.source.dispose();
+  panel.dispose();
+});

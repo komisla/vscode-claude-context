@@ -245,7 +245,7 @@ export class BreakdownPanel implements vscode.Disposable {
 }
 
 function getNonce(): string {
-  return crypto.randomBytes(16).toString('base64');
+  return crypto.randomBytes(16).toString('hex');
 }
 
 function isWebviewCommand(value: unknown): value is WebviewCommand {
