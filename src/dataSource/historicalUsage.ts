@@ -1,3 +1,4 @@
+import { Buffer } from 'buffer';
 import { createReadStream, promises as fsp } from 'fs';
 import { createInterface } from 'readline';
 import * as os from 'os';
@@ -41,8 +42,27 @@ interface CachedFile {
   readonly entries: readonly TokenEntry[];
 }
 
+interface CachedDirectoryEntry {
+  readonly name: string;
+  readonly kind: 'file' | 'directory' | 'symlink';
+}
+
+interface CachedDirectory {
+  readonly mtimeMs: number;
+  readonly entries: readonly CachedDirectoryEntry[];
+}
+
+interface TailChunkRead {
+  readonly entries: readonly TokenEntry[];
+  readonly bytesRead: number;
+  readonly remainder: string;
+}
+
 export class HistoricalUsageReader {
   private readonly cache = new Map<string, CachedFile>();
+  private readonly fileOffsets = new Map<string, number>();
+  private readonly fileRemainders = new Map<string, string>();
+  private readonly directoryCache = new Map<string, CachedDirectory>();
   private inFlight: Promise<HistoricalUsageSnapshot> | undefined;
 
   public constructor(private readonly projectsRoot = path.join(os.homedir(), '.claude', 'projects')) {}
@@ -106,11 +126,15 @@ export class HistoricalUsageReader {
       stats = await fsp.stat(jsonlPath);
     } catch {
       this.cache.delete(jsonlPath);
+      this.fileOffsets.delete(jsonlPath);
+      this.fileRemainders.delete(jsonlPath);
       return;
     }
 
     const cached = this.cache.get(jsonlPath);
     const minTimestamp = nowMs - SEVEN_DAYS_MS;
+    const previousOffset = this.fileOffsets.get(jsonlPath) ?? 0;
+    const truncated = cached !== undefined && stats.size < previousOffset;
 
     if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
       if (cached.entries.some((e) => e.timestampMs < minTimestamp)) {
@@ -118,30 +142,80 @@ export class HistoricalUsageReader {
       }
       return;
     }
-    const entries: TokenEntry[] = [];
 
-    try {
-      const rl = createInterface({
-        input: createReadStream(jsonlPath, 'utf8'),
-        crlfDelay: Infinity
-      });
+    if (cached !== undefined && stats.size === previousOffset && cached.mtimeMs !== stats.mtimeMs) {
+      let entries: TokenEntry[];
 
-      for await (const lineText of rl) {
-        const entry = parseHistoricalUsageLine(lineText);
-        if (entry !== undefined && entry.timestampMs >= minTimestamp) {
-          entries.push(entry);
-        }
+      try {
+        entries = await this.readEntireFile(jsonlPath, minTimestamp);
+      } catch {
+        this.cache.delete(jsonlPath);
+        this.fileOffsets.delete(jsonlPath);
+        this.fileRemainders.delete(jsonlPath);
+        return;
       }
-    } catch {
-      this.cache.delete(jsonlPath);
+
+      this.cache.set(jsonlPath, {
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        entries
+      });
+      this.fileOffsets.set(jsonlPath, stats.size);
+      this.fileRemainders.delete(jsonlPath);
       return;
     }
+
+    if (cached === undefined || truncated) {
+      let entries: TokenEntry[];
+
+      try {
+        entries = await this.readEntireFile(jsonlPath, minTimestamp);
+      } catch {
+        this.cache.delete(jsonlPath);
+        this.fileOffsets.delete(jsonlPath);
+        this.fileRemainders.delete(jsonlPath);
+        return;
+      }
+
+      this.cache.set(jsonlPath, {
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        entries
+      });
+      this.fileOffsets.set(jsonlPath, stats.size);
+      this.fileRemainders.delete(jsonlPath);
+      return;
+    }
+
+    if (stats.size === previousOffset) {
+      return;
+    }
+
+    const currentRemainder = this.fileRemainders.get(jsonlPath) ?? '';
+    let appended: TailChunkRead;
+
+    try {
+      appended = await this.readTailChunk(jsonlPath, previousOffset, currentRemainder, stats.size, minTimestamp);
+    } catch {
+      this.cache.delete(jsonlPath);
+      this.fileOffsets.delete(jsonlPath);
+      this.fileRemainders.delete(jsonlPath);
+      return;
+    }
+
+    const entries = [...cached.entries, ...appended.entries].filter((entry) => entry.timestampMs >= minTimestamp);
 
     this.cache.set(jsonlPath, {
       mtimeMs: stats.mtimeMs,
       size: stats.size,
       entries
     });
+    this.fileOffsets.set(jsonlPath, previousOffset + appended.bytesRead);
+    if (appended.remainder === '') {
+      this.fileRemainders.delete(jsonlPath);
+    } else {
+      this.fileRemainders.set(jsonlPath, appended.remainder);
+    }
   }
 
   private async doRefresh(
@@ -169,31 +243,147 @@ export class HistoricalUsageReader {
       return [];
     }
 
-    let entries;
-
     try {
-      entries = await fsp.readdir(dir, { withFileTypes: true });
+      const stats = await fsp.stat(dir);
+      const cached = this.directoryCache.get(dir);
+
+      if (cached !== undefined && cached.mtimeMs === stats.mtimeMs) {
+        const files: string[] = [];
+        const subdirPromises: Array<Promise<string[]>> = [];
+
+        for (const entry of cached.entries) {
+          if (entry.kind === 'symlink') {
+            continue;
+          }
+
+          const entryPath = path.join(dir, entry.name);
+
+          if (entry.kind === 'directory') {
+            subdirPromises.push(this.findJsonlFiles(entryPath, depth + 1));
+          } else if (entry.name.endsWith('.jsonl')) {
+            files.push(entryPath);
+          }
+        }
+
+        const subdirResults = await Promise.all(subdirPromises);
+
+        for (const subdirFiles of subdirResults) {
+          files.push(...subdirFiles);
+        }
+
+        return files;
+      }
+
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
+      const cachedEntries = entries.map((entry) => {
+        if (entry.isDirectory()) {
+          return { name: entry.name, kind: 'directory' as const };
+        }
+
+        if (entry.isSymbolicLink()) {
+          return { name: entry.name, kind: 'symlink' as const };
+        }
+
+        return { name: entry.name, kind: 'file' as const };
+      });
+
+      this.directoryCache.set(dir, {
+        mtimeMs: stats.mtimeMs,
+        entries: cachedEntries
+      });
+
+      const files: string[] = [];
+      const subdirPromises: Array<Promise<string[]>> = [];
+
+      for (const entry of cachedEntries) {
+        if (entry.kind === 'symlink') {
+          continue;
+        }
+
+        const entryPath = path.join(dir, entry.name);
+
+        if (entry.kind === 'directory') {
+          subdirPromises.push(this.findJsonlFiles(entryPath, depth + 1));
+        } else if (entry.name.endsWith('.jsonl')) {
+          files.push(entryPath);
+        }
+      }
+
+      const subdirResults = await Promise.all(subdirPromises);
+
+      for (const subdirFiles of subdirResults) {
+        files.push(...subdirFiles);
+      }
+
+      return files;
     } catch {
+      this.directoryCache.delete(dir);
       return [];
     }
+  }
 
-    const files: string[] = [];
+  private async readEntireFile(jsonlPath: string, minTimestamp: number): Promise<TokenEntry[]> {
+    const entries: TokenEntry[] = [];
 
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) {
-        continue;
-      }
+    const rl = createInterface({
+      input: createReadStream(jsonlPath, 'utf8'),
+      crlfDelay: Infinity
+    });
 
-      const entryPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        files.push(...(await this.findJsonlFiles(entryPath, depth + 1)));
-      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        files.push(entryPath);
+    for await (const lineText of rl) {
+      const entry = parseHistoricalUsageLine(lineText);
+      if (entry !== undefined && entry.timestampMs >= minTimestamp) {
+        entries.push(entry);
       }
     }
 
-    return files;
+    return entries;
+  }
+
+  private async readTailChunk(
+    jsonlPath: string,
+    offset: number,
+    remainder: string,
+    size: number,
+    minTimestamp: number
+  ): Promise<TailChunkRead> {
+    const handle = await fsp.open(jsonlPath, 'r');
+
+    try {
+      const length = size - offset;
+
+      if (length <= 0) {
+        return { entries: [], bytesRead: 0, remainder };
+      }
+
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, offset);
+      const combined = `${remainder}${buffer.subarray(0, bytesRead).toString('utf8')}`;
+      const complete = combined.endsWith('\n');
+      const lines = combined.split(/\r?\n/);
+      const completeLines = complete ? lines : lines.slice(0, -1);
+      const nextRemainder = complete ? '' : lines.at(-1) ?? '';
+      const entries: TokenEntry[] = [];
+
+      for (const line of completeLines) {
+        if (line.trim() === '') {
+          continue;
+        }
+
+        const entry = parseHistoricalUsageLine(line);
+        if (entry !== undefined && entry.timestampMs >= minTimestamp) {
+          entries.push(entry);
+        }
+      }
+
+      return {
+        entries,
+        bytesRead,
+        remainder: nextRemainder
+      };
+    } finally {
+      await handle.close();
+    }
   }
 }
 
