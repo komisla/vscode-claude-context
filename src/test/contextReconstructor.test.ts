@@ -9,7 +9,8 @@ import {
   CC_BASE_SYSTEM_PROMPT_TOKENS,
   TOKENS_PER_BUILTIN_TOOL,
   TOKENS_PER_MCP_TOOL,
-  clearContextBreakdownCache,
+  cleanImportPath,
+  clearAllContextCaches,
   countClaudeMdTokens,
   countMemoryTokens,
   countTokens,
@@ -312,7 +313,7 @@ test('replays deferred tool deltas and counts MCP tools separately', async () =>
 });
 
 test('reconstructor does not warn on small new sessions', async () => {
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   const breakdown = await reconstructContextBreakdown(
     {
@@ -337,7 +338,7 @@ test('reconstructor does not warn on small new sessions', async () => {
 
 test('reconstructor warns on large zero-conversation sessions', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-drift-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   try {
     const homeDir = path.join(root, 'home');
@@ -364,14 +365,14 @@ test('reconstructor warns on large zero-conversation sessions', async () => {
     assert.equal(breakdown.categories.conversation, 0);
     assert.equal(breakdown.systemPromptDriftWarning, true);
   } finally {
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('reconstructor invalidates when sessionPath mtime changes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-cache-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   try {
     const sessionPath = path.join(root, 'session.jsonl');
@@ -408,14 +409,14 @@ test('reconstructor invalidates when sessionPath mtime changes', async () => {
     assert.equal(cached.categories.tools, TOKENS_PER_BUILTIN_TOOL * 2);
     assert.equal(invalidated.categories.tools, TOKENS_PER_BUILTIN_TOOL * 2);
   } finally {
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('reconstructor reuses the cache for equivalent sources with different property order', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-cache-key-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   const homeDir = path.join(root, 'home');
   const claudeDir = path.join(homeDir, '.claude');
@@ -465,14 +466,14 @@ test('reconstructor reuses the cache for equivalent sources with different prope
     assert.equal(claudeMdReadCount, 1);
   } finally {
     mutableFsPromises.readFile = originalReadFile;
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('reconstructor reuses cached CLAUDE.md snapshots when only the source changes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-snapshot-cache-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   const homeDir = path.join(root, 'home');
   const claudeDir = path.join(homeDir, '.claude');
@@ -521,14 +522,14 @@ test('reconstructor reuses cached CLAUDE.md snapshots when only the source chang
     assert.equal(claudeMdReadCount, 1);
   } finally {
     mutableFsPromises.readFile = originalReadFile;
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('reconstructor invalidates when CLAUDE.md mtime changes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-mtime-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   const homeDir = path.join(root, 'home');
   const claudeDir = path.join(homeDir, '.claude');
@@ -578,14 +579,14 @@ test('reconstructor invalidates when CLAUDE.md mtime changes', async () => {
     assert.equal(claudeMdReadCount, 2);
   } finally {
     mutableFsPromises.readFile = originalReadFile;
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('reconstructor keeps text file cache bounded to one entry per path', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-text-cache-size-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   const homeDir = path.join(root, 'home');
   const claudeDir = path.join(homeDir, '.claude');
@@ -653,14 +654,14 @@ test('reconstructor keeps text file cache bounded to one entry per path', async 
     assert.equal(textFileCacheMap?.size, 1);
   } finally {
     mutableMapPrototype.set = originalSet;
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('reconstructor prunes expired cache entries on cache hits', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-prune-hit-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   const homeDir = path.join(root, 'home');
   const claudeDir = path.join(homeDir, '.claude');
@@ -717,14 +718,14 @@ test('reconstructor prunes expired cache entries on cache hits', async () => {
     assert.ok(deleteCount > 0);
   } finally {
     mutableMapPrototype.delete = originalDelete;
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('reconstructor caches missing CLAUDE.md fingerprints between ticks', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-fingerprint-cache-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   try {
     const homeDir = path.join(root, 'home');
@@ -777,14 +778,14 @@ test('reconstructor caches missing CLAUDE.md fingerprints between ticks', async 
       mutableFsPromises.stat = originalStat;
     }
   } finally {
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('reconstructor shares in-flight work for concurrent calls', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-inflight-'));
-  clearContextBreakdownCache();
+  clearAllContextCaches();
 
   const homeDir = path.join(root, 'home');
   const claudeDir = path.join(homeDir, '.claude');
@@ -831,9 +832,37 @@ test('reconstructor shares in-flight work for concurrent calls', async () => {
     assert.equal(first.categories.claudeMd, countTokens('shared content'));
   } finally {
     mutableFsPromises.readFile = originalReadFile;
-    clearContextBreakdownCache();
+    clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('cleanImportPath strips trailing closing bracket', () => {
+  assert.equal(cleanImportPath('./rules.md]'), './rules.md');
+});
+
+test('cleanImportPath strips trailing closing brace', () => {
+  assert.equal(cleanImportPath('./rules.md}'), './rules.md');
+});
+
+test('cleanImportPath strips trailing double quote', () => {
+  assert.equal(cleanImportPath('./rules.md"'), './rules.md');
+});
+
+test('cleanImportPath strips trailing single quote', () => {
+  assert.equal(cleanImportPath("./rules.md'"), './rules.md');
+});
+
+test('cleanImportPath strips trailing greater-than sign', () => {
+  assert.equal(cleanImportPath('./rules.md>'), './rules.md');
+});
+
+test('cleanImportPath leaves clean import path unchanged', () => {
+  assert.equal(cleanImportPath('./rules.md'), './rules.md');
+});
+
+test('cleanImportPath strips combined trailing punctuation', () => {
+  assert.equal(cleanImportPath('./rules.md]).'), './rules.md');
 });
 
 async function readFileText(filePath: string): Promise<string> {
