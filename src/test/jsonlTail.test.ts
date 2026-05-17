@@ -743,6 +743,59 @@ test('JsonlTailDataSource preserves CRLF boundaries across file chunks', async (
   }
 });
 
+test('dispose captures in-flight refresh so whenIdle drains open file handles', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+
+  const mutable = dataSource as unknown as {
+    refreshActiveSession: () => Promise<void>;
+    refreshActiveSessionCore: () => Promise<void>;
+    refreshing?: Promise<void>;
+    pendingDispose?: Promise<void>;
+  };
+
+  let releaseRefresh: (() => void) | undefined;
+  let refreshSettled = false;
+  const gate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+
+  mutable.refreshActiveSessionCore = async () => {
+    await gate;
+    refreshSettled = true;
+  };
+
+  void mutable.refreshActiveSession();
+  // Give the microtask queue a chance to assign `refreshing`.
+  await delay(0);
+
+  assert.notEqual(mutable.refreshing, undefined);
+
+  dataSource.dispose();
+
+  // dispose() must remain synchronous: the in-flight refresh is still pending.
+  assert.equal(refreshSettled, false);
+  assert.notEqual(mutable.pendingDispose, undefined);
+
+  releaseRefresh?.();
+  await dataSource.whenIdle();
+
+  assert.equal(refreshSettled, true);
+});
+
+test('whenIdle is safe to call when no refresh is in flight', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+
+  // Drain the initial refresh kicked off by the constructor.
+  await dataSource.whenIdle();
+
+  dataSource.dispose();
+  await dataSource.whenIdle();
+  // Calling whenIdle twice after dispose must remain a no-op.
+  await dataSource.whenIdle();
+});
+
 test('JsonlTailDataSource only runs one refresh core at a time', async () => {
   const dataSource = new JsonlTailDataSource(createMockVscode([]));
   await delay(25);

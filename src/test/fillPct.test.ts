@@ -29,6 +29,27 @@ test('fill percent falls back for unknown models', () => {
   assert.equal(fillPercent, Math.min((178_808 / effectiveWindow) * 100, 100));
 });
 
+test('unknown opus models fall back to opus family limits', () => {
+  const limits = getModelLimits('claude-opus-9-9');
+
+  assert.equal(limits.contextWindow, 1_000_000);
+  assert.equal(limits.maxOutputTokens, 128_000);
+});
+
+test('unknown sonnet models fall back to sonnet family limits', () => {
+  const limits = getModelLimits('claude-sonnet-5');
+
+  assert.equal(limits.contextWindow, 1_000_000);
+  assert.equal(limits.maxOutputTokens, 64_000);
+});
+
+test('unknown haiku models fall back to haiku family limits', () => {
+  const limits = getModelLimits('claude-haiku-6');
+
+  assert.equal(limits.contextWindow, 200_000);
+  assert.equal(limits.maxOutputTokens, 8_192);
+});
+
 test('opus 4.7 uses the current Anthropic limits', () => {
   const limits = getModelLimits('claude-opus-4-7:thinking');
   const { effectiveWindow, fillPercent } = calculateFillPercent(155_000, 'claude-opus-4-7:thinking');
@@ -53,7 +74,7 @@ test('unknown non-opus models still use default limits', () => {
   assert.equal(limits.maxOutputTokens, 8_192);
 });
 
-test('unknown models emit a drift warning once', () => {
+test('unknown models emit a drift warning once with chosen contextWindow', () => {
   const originalWarn = console.warn;
   const warnings: string[] = [];
 
@@ -69,6 +90,26 @@ test('unknown models emit a drift warning once', () => {
     assert.equal(second.maxOutputTokens, 8_192);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Unknown Claude model "claude-unknown-99-10"/);
+    assert.match(warnings[0], /contextWindow=200000/);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('unknown sonnet drift warning reports the 1M fallback window', () => {
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+
+  try {
+    getModelLimits('claude-sonnet-5-drift');
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Unknown Claude model "claude-sonnet-5-drift"/);
+    assert.match(warnings[0], /contextWindow=1000000/);
   } finally {
     console.warn = originalWarn;
   }
