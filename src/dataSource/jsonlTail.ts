@@ -99,12 +99,30 @@ export function getModelLimits(model: string | undefined): ModelLimits {
     return MODEL_TABLE[normalizedModel];
   }
 
+  const fallback = resolveFamilyFallback(normalizedModel);
+
   if (normalizedModel !== undefined) {
-    warnUnknownModelOnce(normalizedModel);
+    warnUnknownModelOnce(normalizedModel, fallback.contextWindow);
   }
 
-  if (normalizedModel?.startsWith('claude-opus-')) {
-    return { contextWindow: 200_000, maxOutputTokens: 32_000 };
+  return fallback;
+}
+
+function resolveFamilyFallback(normalizedModel: string | undefined): ModelLimits {
+  if (normalizedModel === undefined) {
+    return DEFAULT_MODEL_LIMITS;
+  }
+
+  if (normalizedModel.startsWith('claude-opus-')) {
+    return { contextWindow: 1_000_000, maxOutputTokens: 128_000 };
+  }
+
+  if (normalizedModel.startsWith('claude-sonnet-')) {
+    return { contextWindow: 1_000_000, maxOutputTokens: 64_000 };
+  }
+
+  if (normalizedModel.startsWith('claude-haiku-')) {
+    return { contextWindow: 200_000, maxOutputTokens: 8_192 };
   }
 
   return DEFAULT_MODEL_LIMITS;
@@ -187,6 +205,7 @@ export class JsonlTailDataSource implements ContextDataSource {
   private ideDirectoryCache: CachedIdeDirectory | undefined;
   private disposed = false;
   private refreshing: Promise<void> | undefined;
+  private pendingDispose: Promise<void> | undefined;
 
   public readonly onDidChange: vscode.Event<ContextUpdate>;
 
@@ -227,7 +246,30 @@ export class JsonlTailDataSource implements ContextDataSource {
       clearTimeout(this.claudeRootWatcherRetryTimer);
     }
 
+    // Capture the in-flight refresh so any open file handles inside readNewBytes
+    // are released before callers (e.g. tests) tear down the directory. The
+    // VSCode Disposable contract requires dispose() to be synchronous, so the
+    // promise is exposed via whenIdle() rather than awaited here.
+    const pendingRefresh = this.refreshing;
+    if (pendingRefresh !== undefined) {
+      this.pendingDispose = pendingRefresh.catch(() => undefined);
+    }
+
     this.emitter.dispose();
+  }
+
+  /**
+   * Resolves once any in-flight refresh started before dispose() has settled,
+   * ensuring file handles opened by readNewBytes are closed. Tests and the
+   * extension's deactivate path can await this to avoid Windows EBUSY when
+   * removing temp directories. Safe to call before or after dispose().
+   */
+  public async whenIdle(): Promise<void> {
+    const inFlight = this.refreshing ?? this.pendingDispose;
+
+    if (inFlight !== undefined) {
+      await inFlight.catch(() => undefined);
+    }
   }
 
   private getClaudeRoot(): string {
@@ -801,13 +843,13 @@ function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function warnUnknownModelOnce(model: string): void {
+function warnUnknownModelOnce(model: string, contextWindow: number): void {
   if (warnedUnknownModels.has(model)) {
     return;
   }
 
   warnedUnknownModels.add(model);
   globalThis.console.warn(
-    `[vscode-claude-context] Unknown Claude model "${model}" - using fallback limits.`
+    `[vscode-claude-context] Unknown Claude model "${model}" - using fallback limits (contextWindow=${contextWindow}).`
   );
 }
