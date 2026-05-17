@@ -331,6 +331,8 @@ async function getMemoryFingerprint(sessionPath: string | undefined): Promise<re
 
   const fingerprints: string[] = [];
 
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.md')) {
       continue;
