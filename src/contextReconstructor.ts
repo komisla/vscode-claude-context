@@ -9,6 +9,7 @@ export const CC_BASE_SYSTEM_PROMPT_TOKENS = 8_000; // measured on CC v2.1.143, 2
 export const TOKENS_PER_BUILTIN_TOOL = 300;
 export const TOKENS_PER_MCP_TOOL = 400;
 export const BREAKDOWN_CACHE_MS = 30_000;
+const MIN_TOKENS_FOR_DRIFT_WARNING = 20_000;
 const MAX_IMPORTED_CLAUDE_MD_DEPTH = 10;
 
 export interface ContextBreakdownCategories {
@@ -106,6 +107,7 @@ export async function reconstructContextBreakdown(
     const memory = await countMemoryTokens(source.sessionPath);
     const tools = await estimateToolTokens(source.sessionPath);
     const conversation = Math.max(0, totalTokens - systemPrompt - claudeMd - memory - tools);
+    const systemPromptDriftWarning = conversation === 0 && totalTokens >= MIN_TOKENS_FOR_DRIFT_WARNING;
     const breakdown = createBreakdown(
       source,
       {
@@ -116,7 +118,7 @@ export async function reconstructContextBreakdown(
         conversation
       },
       now,
-      conversation === 0 && totalTokens > 0
+      systemPromptDriftWarning
     );
 
     cache.set(key, {
@@ -398,7 +400,7 @@ async function countImportedClaudeMdTokens(
 
     const normalizedPath = path.resolve(resolvedPath);
 
-    if (!isAllowedClaudeMdImport(normalizedPath, workspaceRoot, homeDir)) {
+    if (!isAllowedClaudeMdImport(normalizedPath, sourceDir, workspaceRoot, homeDir)) {
       continue;
     }
 
@@ -550,11 +552,13 @@ function pruneExpiredContextBreakdownCache(now: number): void {
 
 function isAllowedClaudeMdImport(
   resolvedPath: string,
+  sourceDir: string,
   workspaceRoot: string | undefined,
   homeDir: string
 ): boolean {
   return (
     isPathWithinRoot(resolvedPath, homeDir) ||
+    isPathWithinRoot(resolvedPath, sourceDir) ||
     (workspaceRoot !== undefined && isPathWithinRoot(resolvedPath, workspaceRoot))
   );
 }
