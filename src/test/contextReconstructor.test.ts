@@ -20,7 +20,7 @@ import {
   replayDeferredTools
 } from '../contextReconstructor';
 
-test('counts workspace, parent, global CLAUDE.md files and direct imports', async () => {
+test('counts workspace, ancestor, global CLAUDE.md files and direct imports', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-reconstruct-'));
 
   try {
@@ -60,6 +60,7 @@ test('counts workspace, parent, global CLAUDE.md files and direct imports', asyn
       globalClaude,
       globalImport,
       parentClaude,
+      parentImport,
       workspaceClaude,
       workspaceImport,
       relativeImport
@@ -278,7 +279,7 @@ test('replays deferred tool deltas and counts MCP tools separately', async () =>
   }
 });
 
-test('reconstructor clamps conversation and always marks estimates', async () => {
+test('reconstructor does not warn on small new sessions', async () => {
   clearContextBreakdownCache();
 
   const breakdown = await reconstructContextBreakdown(
@@ -297,9 +298,43 @@ test('reconstructor clamps conversation and always marks estimates', async () =>
 
   assert.equal(breakdown.categories.systemPrompt, CC_BASE_SYSTEM_PROMPT_TOKENS);
   assert.equal(breakdown.categories.conversation, 0);
-  assert.equal(breakdown.systemPromptDriftWarning, true);
+  assert.equal(breakdown.systemPromptDriftWarning, false);
   assert.equal(breakdown.isEstimate, true);
   assert.equal(breakdown.fillPercent, 1);
+});
+
+test('reconstructor warns on large zero-conversation sessions', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-drift-'));
+  clearContextBreakdownCache();
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const claudeDir = path.join(homeDir, '.claude');
+    await mkdir(claudeDir, { recursive: true });
+
+    const hugeClaude = Array.from({ length: 14_000 }, (_, index) => `token${index}`).join(' ');
+    await writeFile(path.join(claudeDir, 'CLAUDE.md'), hugeClaude);
+
+    const breakdown = await reconstructContextBreakdown(
+      {
+        totalTokens: 20_000,
+        effectiveWindow: 178_808,
+        fillPercent: 11,
+        sessionPath: path.join(root, 'missing', 'session.jsonl')
+      },
+      {
+        homeDir,
+        workspaceRoot: path.join(root, 'missing', 'workspace'),
+        now: () => Date.parse('2026-05-16T12:00:00Z')
+      }
+    );
+
+    assert.equal(breakdown.categories.conversation, 0);
+    assert.equal(breakdown.systemPromptDriftWarning, true);
+  } finally {
+    clearContextBreakdownCache();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('reconstructor invalidates when sessionPath mtime changes', async () => {
