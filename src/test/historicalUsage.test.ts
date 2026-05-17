@@ -126,7 +126,7 @@ test('historical reader refreshes changed files', async () => {
 
   try {
     const filePath = path.join(root, 'session.jsonl');
-    await writeFile(filePath, JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100)));
+    await writeFile(filePath, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`);
 
     const fixedTime = new Date('2026-05-16T11:30:00Z');
     await utimes(filePath, fixedTime, fixedTime);
@@ -135,7 +135,41 @@ test('historical reader refreshes changed files', async () => {
     const first = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
     assert.equal(first.tokens5h, 100);
 
-    await writeFile(filePath, JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 400)));
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100)),
+        JSON.stringify(makeAssistantLine('2026-05-16T11:30:00Z', 400))
+      ].join('\n') + '\n'
+    );
+
+    const second = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    assert.equal(second.tokens5h, 500);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('historical reader re-reads truncated files from scratch', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-truncate-'));
+
+  try {
+    const projectDir = path.join(root, 'project');
+    await mkdir(projectDir);
+
+    const filePath = path.join(projectDir, 'session.jsonl');
+    const firstLine = JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100));
+    const secondLine = JSON.stringify(makeAssistantLine('2026-05-16T11:30:00Z', 200));
+    const truncatedLine = JSON.stringify(makeAssistantLine('2026-05-16T11:45:00Z', 400));
+
+    await writeFile(filePath, `${firstLine}\n${secondLine}\n`);
+
+    const reader = new HistoricalUsageReader(root);
+    const first = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    assert.equal(first.tokens5h, 300);
+
+    await writeFile(filePath, `${truncatedLine}\n`);
+
     const second = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
     assert.equal(second.tokens5h, 400);
   } finally {
