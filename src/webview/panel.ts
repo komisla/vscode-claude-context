@@ -12,6 +12,12 @@ import {
 import dashboardHtml from './dashboard.html';
 
 const HISTORY_REFRESH_THROTTLE_MS = 30_000;
+const CLAUDE_CODE_EXTENSION_ID = 'anthropic.claude-code';
+const CLAUDE_CODE_NEW_SESSION_URI = 'vscode://anthropic.claude-code/new-session';
+const NEW_CHAT_FALLBACK_MESSAGE =
+  'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.';
+const CLAUDE_CODE_MISSING_MESSAGE =
+  'Claude Code extension not found. Install the Anthropic Claude Code extension, or start a new chat manually.';
 
 type WebviewCommand =
   | {
@@ -204,22 +210,31 @@ export class BreakdownPanel implements vscode.Disposable {
         });
         return;
       case 'startNewChat': {
+        const claudeCodeExtension = vscode.extensions.getExtension(CLAUDE_CODE_EXTENSION_ID);
+
+        if (claudeCodeExtension === undefined) {
+          void vscode.window.showInformationMessage(CLAUDE_CODE_MISSING_MESSAGE);
+          await this.postWebviewMessage(panel, {
+            type: 'newChatUnavailable',
+            payload: {
+              message: CLAUDE_CODE_MISSING_MESSAGE
+            }
+          });
+          return;
+        }
+
         const opened = await vscode.env.openExternal(
-          vscode.Uri.parse('vscode://anthropic.claude-code/new-session')
+          vscode.Uri.parse(CLAUDE_CODE_NEW_SESSION_URI)
         );
 
         if (!opened) {
-          void vscode.window.showInformationMessage(
-            'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.'
-          );
+          void vscode.window.showInformationMessage(NEW_CHAT_FALLBACK_MESSAGE);
         }
 
         await this.postWebviewMessage(panel, {
           type: opened ? 'commandResult' : 'newChatUnavailable',
           payload: {
-            message: opened
-              ? 'Opening new Claude Code chat'
-              : 'Start a new Claude Code chat from the Claude Code view, or run /clear in the terminal.'
+            message: opened ? 'Opening new Claude Code chat' : NEW_CHAT_FALLBACK_MESSAGE
           }
         });
         return;

@@ -11,6 +11,7 @@ interface VscodeMock {
     section: string,
     values: Record<string, unknown>
   ) => void;
+  readonly setExtension: (extensionId: string, extension: unknown) => void;
   readonly env: {
     openExternalResult: boolean;
     readonly openExternalCalls: { readonly toString: () => string }[];
@@ -26,6 +27,9 @@ interface VscodeMock {
     readonly informationMessages: string[];
   };
 }
+
+const CLAUDE_CODE_EXTENSION_ID = 'anthropic.claude-code';
+const fakeClaudeCodeExtension = { id: CLAUDE_CODE_EXTENSION_ID };
 
 function createSource(initial: ContextUpdate) {
   const emitter = new vscode.EventEmitter<ContextUpdate>();
@@ -212,6 +216,7 @@ test('BreakdownPanel falls back when openExternal is unavailable', async () => {
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
     showHistoricalUsage: true
   });
+  vscodeMock.setExtension(CLAUDE_CODE_EXTENSION_ID, fakeClaudeCodeExtension);
   vscodeMock.env.openExternalResult = false;
 
   const historicalUsage = {
@@ -244,6 +249,92 @@ test('BreakdownPanel falls back when openExternal is unavailable', async () => {
     | undefined;
   assert.notEqual(lastMessage, undefined);
   assert.equal(lastMessage!.type, 'newChatUnavailable');
+
+  tracker.source.dispose();
+  panel.dispose();
+});
+
+test('BreakdownPanel skips openExternal when Claude Code extension is missing', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: true
+  });
+
+  const historicalUsage = {
+    refresh: async () => makeHistorySnapshot(0, 0)
+  } as unknown as HistoricalUsageReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  panel.open(tracker.source);
+
+  assert.equal(vscodeMock.window.webviewPanels.length, 1);
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  await flush();
+  mockPanel.webview.receiveMessage({ type: 'startNewChat' });
+  await flush();
+
+  assert.equal(vscodeMock.env.openExternalCalls.length, 0);
+  assert.equal(vscodeMock.window.informationMessages.length, 1);
+  assert.match(
+    vscodeMock.window.informationMessages[0],
+    /Claude Code extension not found\./
+  );
+
+  const lastMessage = mockPanel.postedMessages.at(-1) as
+    | { readonly type: 'newChatUnavailable' }
+    | undefined;
+  assert.notEqual(lastMessage, undefined);
+  assert.equal(lastMessage!.type, 'newChatUnavailable');
+
+  tracker.source.dispose();
+  panel.dispose();
+});
+
+test('BreakdownPanel opens new chat URI when Claude Code extension is installed', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: true
+  });
+  vscodeMock.setExtension(CLAUDE_CODE_EXTENSION_ID, fakeClaudeCodeExtension);
+
+  const historicalUsage = {
+    refresh: async () => makeHistorySnapshot(0, 0)
+  } as unknown as HistoricalUsageReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  panel.open(tracker.source);
+
+  assert.equal(vscodeMock.window.webviewPanels.length, 1);
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  await flush();
+  mockPanel.webview.receiveMessage({ type: 'startNewChat' });
+  await flush();
+
+  assert.equal(vscodeMock.env.openExternalCalls.length, 1);
+  assert.equal(
+    vscodeMock.env.openExternalCalls[0].toString(),
+    'vscode://anthropic.claude-code/new-session'
+  );
+  assert.equal(vscodeMock.window.informationMessages.length, 0);
+
+  const lastMessage = mockPanel.postedMessages.at(-1) as
+    | { readonly type: 'commandResult'; readonly payload: { readonly message: string } }
+    | undefined;
+  assert.notEqual(lastMessage, undefined);
+  assert.equal(lastMessage!.type, 'commandResult');
+  assert.equal(lastMessage!.payload.message, 'Opening new Claude Code chat');
 
   tracker.source.dispose();
   panel.dispose();
