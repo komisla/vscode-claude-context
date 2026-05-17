@@ -200,12 +200,19 @@ export class HistoricalUsageReader {
     budgets: HistoricalUsageBudgets,
     nowMs: number
   ): Promise<HistoricalUsageSnapshot> {
-    const jsonlPaths = await this.findJsonlFiles(this.projectsRoot);
+    const visitedDirectories = new Set<string>();
+    const jsonlPaths = await this.findJsonlFiles(this.projectsRoot, 0, visitedDirectories);
     const existingPaths = new Set(jsonlPaths);
 
     for (const cachedPath of this.cache.keys()) {
       if (!existingPaths.has(cachedPath)) {
         this.cache.delete(cachedPath);
+      }
+    }
+
+    for (const cachedDirectory of this.directoryCache.keys()) {
+      if (!visitedDirectories.has(cachedDirectory)) {
+        this.directoryCache.delete(cachedDirectory);
       }
     }
 
@@ -216,10 +223,16 @@ export class HistoricalUsageReader {
     return this.calculateSnapshot(budgets, nowMs);
   }
 
-  private async findJsonlFiles(dir: string, depth = 0): Promise<string[]> {
+  private async findJsonlFiles(
+    dir: string,
+    depth = 0,
+    visitedDirectories = new Set<string>()
+  ): Promise<string[]> {
     if (depth > 3) {
       return [];
     }
+
+    visitedDirectories.add(dir);
 
     try {
       const stats = await fsp.stat(dir);
@@ -237,7 +250,7 @@ export class HistoricalUsageReader {
           const entryPath = path.join(dir, entry.name);
 
           if (entry.kind === 'directory') {
-            subdirPromises.push(this.findJsonlFiles(entryPath, depth + 1));
+            subdirPromises.push(this.findJsonlFiles(entryPath, depth + 1, visitedDirectories));
           } else if (entry.name.endsWith('.jsonl')) {
             files.push(entryPath);
           }
@@ -281,7 +294,7 @@ export class HistoricalUsageReader {
         const entryPath = path.join(dir, entry.name);
 
         if (entry.kind === 'directory') {
-          subdirPromises.push(this.findJsonlFiles(entryPath, depth + 1));
+          subdirPromises.push(this.findJsonlFiles(entryPath, depth + 1, visitedDirectories));
         } else if (entry.name.endsWith('.jsonl')) {
           files.push(entryPath);
         }

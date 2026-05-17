@@ -48,9 +48,16 @@ const DEFAULT_MODEL_LIMITS: ModelLimits = {
   maxOutputTokens: 8_192
 };
 
+const warnedUnknownModels = new Set<string>();
+
+// Last verified against Anthropic's models overview on 2026-05-17.
 export const MODEL_TABLE: Readonly<Record<string, ModelLimits>> = {
   'claude-opus-4-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
-  'claude-sonnet-4-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
+  'claude-opus-4-6': { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+  'claude-opus-4-7': { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+  'claude-sonnet-4-5': { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
+  'claude-sonnet-4-6': { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
+  'claude-sonnet-4-7': { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
   'claude-haiku-4-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
   'claude-opus-4': { contextWindow: 200_000, maxOutputTokens: 32_000 },
   'claude-sonnet-4': { contextWindow: 200_000, maxOutputTokens: 8_192 },
@@ -87,6 +94,10 @@ export function getModelLimits(model: string | undefined): ModelLimits {
 
   if (normalizedModel !== undefined && Object.hasOwn(MODEL_TABLE, normalizedModel)) {
     return MODEL_TABLE[normalizedModel];
+  }
+
+  if (normalizedModel !== undefined) {
+    warnUnknownModelOnce(normalizedModel);
   }
 
   if (normalizedModel?.startsWith('claude-opus-')) {
@@ -761,4 +772,15 @@ function normalizeModelKey(model: string | undefined): string | undefined {
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function warnUnknownModelOnce(model: string): void {
+  if (warnedUnknownModels.has(model)) {
+    return;
+  }
+
+  warnedUnknownModels.add(model);
+  globalThis.console.warn(
+    `[vscode-claude-context] Unknown Claude model "${model}" - using fallback limits.`
+  );
 }
