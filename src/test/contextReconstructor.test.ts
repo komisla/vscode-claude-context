@@ -583,6 +583,81 @@ test('reconstructor invalidates when CLAUDE.md mtime changes', async () => {
   }
 });
 
+test('reconstructor keeps text file cache bounded to one entry per path', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-text-cache-size-'));
+  clearContextBreakdownCache();
+
+  const homeDir = path.join(root, 'home');
+  const claudeDir = path.join(homeDir, '.claude');
+  await mkdir(claudeDir, { recursive: true });
+  const claudePath = path.join(claudeDir, 'CLAUDE.md');
+  await writeFile(claudePath, 'alpha');
+
+  const mutableMapPrototype = Map.prototype as unknown as {
+    set: (
+      this: Map<unknown, unknown>,
+      key: unknown,
+      value: unknown
+    ) => Map<unknown, unknown>;
+  };
+  const originalSet = mutableMapPrototype.set;
+  let textFileCacheMap: Map<unknown, unknown> | undefined;
+
+  mutableMapPrototype.set = function (
+    this: Map<unknown, unknown>,
+    key: unknown,
+    value: unknown
+  ): Map<unknown, unknown> {
+    const result = originalSet.call(this, key, value);
+
+    if (isCachedTextFileValue(value)) {
+      textFileCacheMap = result;
+    }
+
+    return result;
+  };
+
+  try {
+    const source = {
+      totalTokens: 5_000,
+      effectiveWindow: 178_808,
+      fillPercent: 3
+    } satisfies ContextUpdate;
+
+    const first = await reconstructContextBreakdown(source, {
+      homeDir,
+      now: () => 1_000
+    });
+
+    await writeFile(claudePath, 'alpha beta');
+    const secondChanged = new Date('2026-05-16T11:30:00Z');
+    await utimes(claudePath, secondChanged, secondChanged);
+
+    const second = await reconstructContextBreakdown(source, {
+      homeDir,
+      now: () => 2_000
+    });
+
+    await writeFile(claudePath, 'alpha beta gamma');
+    const thirdChanged = new Date('2026-05-16T11:31:00Z');
+    await utimes(claudePath, thirdChanged, thirdChanged);
+
+    const third = await reconstructContextBreakdown(source, {
+      homeDir,
+      now: () => 3_000
+    });
+
+    assert.equal(first.categories.claudeMd, countTokens('alpha'));
+    assert.equal(second.categories.claudeMd, countTokens('alpha beta'));
+    assert.equal(third.categories.claudeMd, countTokens('alpha beta gamma'));
+    assert.equal(textFileCacheMap?.size, 1);
+  } finally {
+    mutableMapPrototype.set = originalSet;
+    clearContextBreakdownCache();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('reconstructor prunes expired cache entries on cache hits', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-prune-hit-'));
   clearContextBreakdownCache();
@@ -763,6 +838,28 @@ test('reconstructor shares in-flight work for concurrent calls', async () => {
 
 async function readFileText(filePath: string): Promise<string> {
   return readFile(filePath, 'utf8');
+}
+
+function isCachedTextFileValue(value: unknown): value is {
+  readonly fingerprint: string;
+  readonly content: string;
+  readonly tokenCount: number;
+} {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as {
+    readonly fingerprint?: unknown;
+    readonly content?: unknown;
+    readonly tokenCount?: unknown;
+  };
+
+  return (
+    typeof candidate.fingerprint === 'string' &&
+    typeof candidate.content === 'string' &&
+    typeof candidate.tokenCount === 'number'
+  );
 }
 
 function makeToolDelta(addedNames: readonly string[]): string {
