@@ -5,8 +5,26 @@ import { BreakdownPanel } from '../webview/panel';
 import type { ContextDataSource, ContextUpdate } from '../dataSource';
 import type { HistoricalUsageReader, HistoricalUsageSnapshot } from '../dataSource/historicalUsage';
 
-function mockVscode(): any {
-  return vscode as any;
+interface VscodeMock {
+  readonly resetMockState: () => void;
+  readonly setWorkspaceConfiguration: (
+    section: string,
+    values: Record<string, unknown>
+  ) => void;
+  readonly env: {
+    openExternalResult: boolean;
+    readonly openExternalCalls: { readonly toString: () => string }[];
+  };
+  readonly window: {
+    readonly webviewPanels: Array<{
+      readonly postedMessages: Array<{ readonly type: string; readonly payload?: unknown }>;
+      readonly webview: {
+        receiveMessage(message: unknown): void;
+      };
+      dispose(): void;
+    }>;
+    readonly informationMessages: string[];
+  };
 }
 
 function createSource(initial: ContextUpdate) {
@@ -56,7 +74,7 @@ async function flush(): Promise<void> {
 }
 
 test('BreakdownPanel drops out-of-order snapshots', async () => {
-  const vscodeMock = mockVscode();
+  const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
     showHistoricalUsage: true
@@ -91,8 +109,16 @@ test('BreakdownPanel drops out-of-order snapshots', async () => {
   await flush();
 
   assert.equal(mockPanel.postedMessages.length, 1);
-  assert.equal(mockPanel.postedMessages[0].type, 'contextSnapshot');
-  assert.equal(mockPanel.postedMessages[0].payload.breakdown.fillPercent, 55);
+  const firstMessage = mockPanel.postedMessages[0] as {
+    readonly type: 'contextSnapshot';
+    readonly payload: {
+      readonly breakdown: {
+        readonly fillPercent: number;
+      };
+    };
+  };
+  assert.equal(firstMessage.type, 'contextSnapshot');
+  assert.equal(firstMessage.payload.breakdown.fillPercent, 55);
 
   firstHistory.resolve(makeHistorySnapshot(80, 90));
   await flush();
@@ -104,7 +130,7 @@ test('BreakdownPanel drops out-of-order snapshots', async () => {
 });
 
 test('BreakdownPanel tears down subscriptions when the panel closes', async () => {
-  const vscodeMock = mockVscode();
+  const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
     showHistoricalUsage: true
@@ -140,7 +166,7 @@ test('BreakdownPanel tears down subscriptions when the panel closes', async () =
 });
 
 test('BreakdownPanel falls back when openExternal is unavailable', async () => {
-  const vscodeMock = mockVscode();
+  const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
     showHistoricalUsage: true
@@ -172,7 +198,11 @@ test('BreakdownPanel falls back when openExternal is unavailable', async () => {
     vscodeMock.window.informationMessages[0],
     /Start a new Claude Code chat from the Claude Code view, or run \/clear in the terminal\./
   );
-  assert.equal(mockPanel.postedMessages.at(-1).type, 'newChatUnavailable');
+  const lastMessage = mockPanel.postedMessages.at(-1) as
+    | { readonly type: 'newChatUnavailable' }
+    | undefined;
+  assert.notEqual(lastMessage, undefined);
+  assert.equal(lastMessage!.type, 'newChatUnavailable');
 
   tracker.source.dispose();
   panel.dispose();

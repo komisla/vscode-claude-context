@@ -5,8 +5,21 @@ import { StatusBarController } from '../statusBar';
 import type { ContextUpdate } from '../dataSource';
 import type { HistoricalUsageReader, HistoricalUsageSnapshot } from '../dataSource/historicalUsage';
 
-function mockVscode(): any {
-  return vscode as any;
+interface VscodeMock {
+  readonly resetMockState: () => void;
+  readonly setWorkspaceConfiguration: (
+    section: string,
+    values: Record<string, unknown>
+  ) => void;
+  readonly window: {
+    readonly statusBarItems: Array<{
+      visible: boolean;
+      hideCount: number;
+      showCount: number;
+      text: string;
+      backgroundColor: { readonly id: string } | undefined;
+    }>;
+  };
 }
 
 function createSource(initial: ContextUpdate) {
@@ -56,7 +69,7 @@ async function flush(): Promise<void> {
 }
 
 test('StatusBarController applies thresholds and starts and stops the history timer', async () => {
-  const vscodeMock = mockVscode();
+  const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
     hideBelow: 40,
@@ -92,7 +105,7 @@ test('StatusBarController applies thresholds and starts and stops the history ti
 
   assert.equal(item.visible, true);
   assert.equal(item.text, '$(hubot) ctx 50%');
-  assert.equal(item.backgroundColor.id, 'statusBarItem.warningBackground');
+  assert.equal(item.backgroundColor!.id, 'statusBarItem.warningBackground');
   assert.notEqual((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
 
   tracker.fire({
@@ -103,7 +116,7 @@ test('StatusBarController applies thresholds and starts and stops the history ti
   });
 
   assert.equal(item.text, '$(hubot) ctx 65%');
-  assert.equal(item.backgroundColor.id, 'statusBarItem.errorBackground');
+  assert.equal(item.backgroundColor!.id, 'statusBarItem.errorBackground');
 
   tracker.fire({
     fillPercent: 10,
@@ -121,7 +134,7 @@ test('StatusBarController applies thresholds and starts and stops the history ti
 });
 
 test('StatusBarController ignores a late history refresh after dispose', async () => {
-  const vscodeMock = mockVscode();
+  const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
     hideBelow: 40,
