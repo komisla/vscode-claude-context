@@ -15,6 +15,12 @@ const WATCHER_ERROR_RETRY_MS = 30_000;
 const CLAUDE_ROOT_WATCHER_ERROR_RETRY_MS = 60_000;
 const STALE_LOCK_TTL_MS = 10 * 60 * 1000;
 const SESSION_NOT_FOUND_ERROR = 'Claude Code session not found';
+const USAGE_TOKEN_FIELDS = [
+  'input_tokens',
+  'cache_read_input_tokens',
+  'cache_creation_input_tokens',
+  'output_tokens'
+] as const;
 
 interface ModelLimits {
   readonly contextWindow: number;
@@ -54,6 +60,7 @@ const DEFAULT_MODEL_LIMITS: ModelLimits = {
 };
 
 const warnedUnknownModels = new Set<string>();
+const warnedInvalidUsageSessionPaths = new Set<string>();
 
 // Context windows verified empirically via Claude Code Stop hook context_window_percentage
 // field (anthropics/claude-code#11008). Claude 4.x models use 200K despite some API docs
@@ -192,6 +199,7 @@ export function parseContextUpdateFromLine(
   }
 
   const usage = line.message.usage;
+  warnInvalidUsageOnce(usage, sessionPath);
   const totalTokens = getContextFillTokens(usage);
   const model = normalizeModel(line.message);
   const { fillPercent, contextWindow, effectiveWindow } = calculateFillPercent(totalTokens, model);
@@ -815,13 +823,26 @@ export class JsonlTailDataSource implements ContextDataSource {
     try {
       const buffer = Buffer.alloc(length);
       const { bytesRead } = await handle.read(buffer, 0, length, offset);
+      let startsOnLineBoundary = offset === 0;
+
+      if (offset > 0) {
+        const previousByte = Buffer.alloc(1);
+        const { bytesRead: previousBytesRead } = await handle.read(
+          previousByte,
+          0,
+          previousByte.length,
+          offset - 1
+        );
+        startsOnLineBoundary = previousBytesRead === 1 && previousByte[0] === 0x0a;
+      }
+
       let lines = buffer.subarray(0, bytesRead).toString('utf8').split(/\r?\n/);
 
       if (lines.at(-1) === '') {
         lines = lines.slice(0, -1);
       }
 
-      if (offset > 0) {
+      if (!startsOnLineBoundary) {
         lines = lines.slice(1);
       }
 
@@ -988,6 +1009,25 @@ function normalizeModelKey(model: string | undefined): string | undefined {
 
 export function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function warnInvalidUsageOnce(usage: unknown, sessionPath: string): void {
+  if (!isRecord(usage) || warnedInvalidUsageSessionPaths.has(sessionPath)) {
+    return;
+  }
+
+  const hasNumericTokenField = USAGE_TOKEN_FIELDS.some(
+    (field) => typeof usage[field] === 'number' && Number.isFinite(usage[field])
+  );
+
+  if (hasNumericTokenField) {
+    return;
+  }
+
+  warnedInvalidUsageSessionPaths.add(sessionPath);
+  globalThis.console.warn(
+    `[vscode-claude-context] Assistant usage has no numeric token fields in ${sessionPath}.`
+  );
 }
 
 function warnUnknownModelOnce(model: string, contextWindow: number): void {

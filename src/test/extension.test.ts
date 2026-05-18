@@ -61,3 +61,41 @@ test('activate wires the command, status bar and panel into the extension contex
     }
   }
 });
+
+test('activate logs initial historical usage refresh failures', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  const originalRefresh = HistoricalUsageReader.prototype.refresh;
+  const originalWarn = console.warn;
+  const refreshError = new Error('scan failed');
+  const warnings: unknown[][] = [];
+
+  HistoricalUsageReader.prototype.refresh = async () => {
+    throw refreshError;
+  };
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  const context = {
+    subscriptions: [],
+    extensionUri: vscode.Uri.parse('file:///extension')
+  } as unknown as Parameters<typeof activate>[0];
+
+  try {
+    activate(context);
+    await Promise.resolve();
+
+    assert.deepEqual(warnings, [
+      ['[vscode-claude-context] historical usage initial refresh failed:', refreshError]
+    ]);
+  } finally {
+    HistoricalUsageReader.prototype.refresh = originalRefresh;
+    console.warn = originalWarn;
+    await deactivate();
+
+    for (const disposable of context.subscriptions.slice().reverse()) {
+      disposable.dispose();
+    }
+  }
+});

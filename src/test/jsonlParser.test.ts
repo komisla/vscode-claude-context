@@ -88,6 +88,37 @@ test('parser normalizes missing and invalid models consistently', () => {
   );
 });
 
+test('parser warns once per session when usage has no numeric token fields', () => {
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  const line = {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      model: 'claude-sonnet-4-20250514',
+      usage: {
+        renamed_input_tokens: 1,
+        input_tokens: Number.NaN
+      }
+    }
+  };
+
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+
+  try {
+    assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'invalid-usage.jsonl')?.totalTokens, 0);
+    assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'invalid-usage.jsonl')?.totalTokens, 0);
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Assistant usage has no numeric token fields/);
+    assert.match(warnings[0], /invalid-usage\.jsonl/);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test('parser skips malformed JSONL lines', () => {
   assert.equal(parseContextUpdateFromLine('{', 'session.jsonl'), undefined);
 });
