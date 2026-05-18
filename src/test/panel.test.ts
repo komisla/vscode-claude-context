@@ -111,7 +111,8 @@ test('BreakdownPanel throttles historical usage refreshes', async () => {
     refresh: async () => {
       refreshCalls += 1;
       return makeHistorySnapshot();
-    }
+    },
+    calculateSnapshot: () => makeHistorySnapshot()
   } as unknown as HistoricalUsageReader;
   const rateLimit = {
     refresh: async () => makeRateLimitSnapshot()
@@ -150,6 +151,73 @@ test('BreakdownPanel throttles historical usage refreshes', async () => {
   }
 });
 
+test('BreakdownPanel recalculates cached historical usage snapshots', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: true
+  });
+
+  const originalDateNow = Date.now;
+  let currentTime = Date.parse('2026-05-16T12:00:00Z');
+  Date.now = () => currentTime;
+
+  let refreshCalls = 0;
+  const calculateCalls: number[] = [];
+  const historicalUsage = {
+    refresh: async () => {
+      refreshCalls += 1;
+      return {
+        ...makeHistorySnapshot(),
+        tokens7d: 100
+      };
+    },
+    calculateSnapshot: (nowMs: number) => {
+      calculateCalls.push(nowMs);
+      return {
+        ...makeHistorySnapshot(),
+        tokens7d: 42
+      };
+    }
+  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 35
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
+  panel.open(tracker.source);
+
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  try {
+    await waitFor(() => refreshCalls === 1 && mockPanel.postedMessages.length >= 2);
+
+    currentTime += 10_000;
+    const expectedNow = currentTime;
+    tracker.fire({
+      fillPercent: 55
+    });
+
+    await waitFor(() => calculateCalls.length === 1 && mockPanel.postedMessages.length >= 4);
+
+    assert.equal(refreshCalls, 1);
+    assert.deepEqual(calculateCalls, [expectedNow]);
+
+    const lastMessage = mockPanel.postedMessages.at(-1) as {
+      readonly payload: { readonly history?: { readonly tokens7d: number } };
+    };
+    assert.equal(lastMessage.payload.history?.tokens7d, 42);
+  } finally {
+    Date.now = originalDateNow;
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
 test('BreakdownPanel reuses cached history during rapid JSONL changes', async () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
@@ -166,7 +234,8 @@ test('BreakdownPanel reuses cached history during rapid JSONL changes', async ()
     refresh: async () => {
       refreshCalls += 1;
       return makeHistorySnapshot();
-    }
+    },
+    calculateSnapshot: () => makeHistorySnapshot()
   } as unknown as HistoricalUsageReader;
   const rateLimit = {
     refresh: async () => makeRateLimitSnapshot()
@@ -319,7 +388,8 @@ test('BreakdownPanel ignores stale usage snapshots after a newer context post', 
   const secondRateLimit = deferred<RateLimitSnapshot | undefined>();
   let rateLimitCalls = 0;
   const historicalUsage = {
-    refresh: async () => makeHistorySnapshot()
+    refresh: async () => makeHistorySnapshot(),
+    calculateSnapshot: () => makeHistorySnapshot()
   } as unknown as HistoricalUsageReader;
   const rateLimit = {
     refresh: async () => {
