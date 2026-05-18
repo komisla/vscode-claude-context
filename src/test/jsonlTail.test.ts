@@ -821,6 +821,51 @@ test('dispose captures in-flight refresh so whenIdle drains open file handles', 
   assert.equal(refreshSettled, true);
 });
 
+test('whenIdle waits for refresh and poll work that overlap', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+  let releaseRefresh: (() => void) | undefined;
+  let releasePoll: (() => void) | undefined;
+
+  try {
+    const mutable = dataSource as unknown as {
+      refreshing?: Promise<void>;
+      pollInFlight?: Promise<void>;
+    };
+
+    let refreshSettled = false;
+    let pollSettled = false;
+
+    mutable.refreshing = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    }).then(() => {
+      refreshSettled = true;
+    });
+    mutable.pollInFlight = new Promise<void>((resolve) => {
+      releasePoll = resolve;
+    }).then(() => {
+      pollSettled = true;
+    });
+
+    const idle = dataSource.whenIdle();
+    releaseRefresh?.();
+    await delay(0);
+
+    assert.equal(refreshSettled, true);
+    assert.equal(pollSettled, false);
+
+    releasePoll?.();
+    await idle;
+
+    assert.equal(pollSettled, true);
+  } finally {
+    releaseRefresh?.();
+    releasePoll?.();
+    dataSource.dispose();
+    await dataSource.whenIdle();
+  }
+});
+
 test('whenIdle is safe to call when no refresh is in flight', async () => {
   const dataSource = new JsonlTailDataSource(createMockVscode([]));
   await delay(25);
