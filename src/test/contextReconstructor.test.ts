@@ -73,6 +73,74 @@ test('counts workspace, ancestor, global CLAUDE.md files and direct imports', as
   }
 });
 
+test('counts CLAUDE.md relative imports with spaces in the path', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-space-import-'));
+
+  try {
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    const importsDir = path.join(workspaceRoot, 'path with spaces');
+    await mkdir(importsDir, { recursive: true });
+
+    const workspaceClaude = 'workspace rules @./path with spaces/file.md';
+    const importContent = 'relative import with spaces should be counted';
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+    await writeFile(path.join(importsDir, 'file.md'), importContent);
+
+    const expected = countTokens(workspaceClaude) + countTokens(importContent);
+
+    assert.equal(await countClaudeMdTokens(workspaceRoot, path.join(root, 'home')), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('counts CLAUDE.md home imports with spaces in the path', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-home-space-import-'));
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    const homeProjectDir = path.join(homeDir, 'Documents', 'My Project');
+    await mkdir(workspaceRoot, { recursive: true });
+    await mkdir(homeProjectDir, { recursive: true });
+
+    const workspaceClaude = 'workspace rules @~/Documents/My Project/CLAUDE.md';
+    const importContent = 'home import with spaces should be counted';
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+    await writeFile(path.join(homeProjectDir, 'CLAUDE.md'), importContent);
+
+    const expected = countTokens(workspaceClaude) + countTokens(importContent);
+
+    assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('counts quoted CLAUDE.md imports with spaces in the path', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-quoted-space-import-'));
+
+  try {
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    const importsDir = path.join(workspaceRoot, 'quoted imports');
+    await mkdir(importsDir, { recursive: true });
+
+    const workspaceClaude = 'workspace rules @"./quoted imports/file.md"';
+    const importContent = 'quoted import with spaces should be counted';
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+    await writeFile(path.join(importsDir, 'file.md'), importContent);
+
+    const expected = countTokens(workspaceClaude) + countTokens(importContent);
+
+    assert.equal(await countClaudeMdTokens(workspaceRoot, path.join(root, 'home')), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('ignores @ imports inside fenced and inline code', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-code-block-'));
 
