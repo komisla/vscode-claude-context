@@ -4,6 +4,7 @@ import * as path from 'path';
 import { clearTimeout, setTimeout } from 'timers';
 
 export const RATE_LIMIT_REFRESH_MS = 5 * 60 * 1_000;
+export const RATE_LIMIT_ERROR_RETRY_MS = 30 * 1_000;
 
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 const RATE_LIMIT_FETCH_TIMEOUT_MS = 8_000;
@@ -11,8 +12,7 @@ const RATE_LIMIT_5H_HEADER = 'anthropic-ratelimit-unified-5h-utilization';
 const RATE_LIMIT_7D_HEADER = 'anthropic-ratelimit-unified-7d-utilization';
 const RATE_LIMIT_5H_RESET_HEADER = 'anthropic-ratelimit-unified-5h-reset';
 const RATE_LIMIT_7D_RESET_HEADER = 'anthropic-ratelimit-unified-7d-reset';
-// Cheapest model for the one-token probe. Update when Anthropic retires this model ID.
-const RATE_LIMIT_PROBE_MODEL = 'claude-haiku-4-5-20251001';
+const RATE_LIMIT_PROBE_MODELS = ['claude-haiku-4-5-20251001', 'claude-haiku-4-5'] as const;
 
 export interface RateLimitSnapshot {
   readonly pct5h: number;
@@ -60,6 +60,7 @@ export class RateLimitReader {
   private readonly readFile: (filePath: string, encoding: 'utf-8') => Promise<string>;
   private cached: RateLimitSnapshot | undefined;
   private cachedAtMs = 0;
+  private cachedTtlMs = RATE_LIMIT_REFRESH_MS;
   private inFlight: Promise<RateLimitSnapshot | undefined> | undefined;
   private didWarnAuthFailure = false;
 
@@ -72,7 +73,7 @@ export class RateLimitReader {
   }
 
   public async refresh(nowMs = Date.now()): Promise<RateLimitSnapshot | undefined> {
-    if (this.cachedAtMs !== 0 && nowMs - this.cachedAtMs < RATE_LIMIT_REFRESH_MS) {
+    if (this.cachedAtMs !== 0 && nowMs - this.cachedAtMs < this.cachedTtlMs) {
       return this.cached;
     }
 
@@ -95,40 +96,61 @@ export class RateLimitReader {
         return this.cache(undefined, nowMs);
       }
 
-      const controller = new globalThis.AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.fetchTimeoutMs);
+      let response: RateLimitFetchResponse | undefined;
 
-      try {
-        const response = await this.fetcher(ANTHROPIC_MESSAGES_URL, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'anthropic-version': '2023-06-01',
-            'anthropic-beta': 'oauth-2025-04-20',
-            'content-type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: RATE_LIMIT_PROBE_MODEL,
-            max_tokens: 1,
-            messages: [{ role: 'user', content: '.' }]
-          }),
-          signal: controller.signal
-        });
+      for (const model of RATE_LIMIT_PROBE_MODELS) {
+        response = await this.fetchProbe(token, model);
 
-        this.warnAuthFailureOnce(response.status);
-
-        return this.cache(readRateLimitSnapshot(response.headers), nowMs);
-      } finally {
-        clearTimeout(timeout);
+        if (response.status !== 404) {
+          break;
+        }
       }
+
+      this.warnAuthFailureOnce(response?.status);
+
+      return this.cache(response === undefined ? undefined : readRateLimitSnapshot(response.headers), nowMs);
     } catch {
-      return this.cache(undefined, nowMs);
+      return this.cache(undefined, nowMs, RATE_LIMIT_ERROR_RETRY_MS);
     }
   }
 
-  private cache(snapshot: RateLimitSnapshot | undefined, nowMs: number): RateLimitSnapshot | undefined {
+  private async fetchProbe(token: string, model: string): Promise<RateLimitFetchResponse> {
+    const controller = new globalThis.AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.fetchTimeoutMs);
+
+    try {
+      if (this.fetcher === undefined) {
+        throw new Error('missing fetch implementation');
+      }
+
+      return await this.fetcher(ANTHROPIC_MESSAGES_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'oauth-2025-04-20',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1,
+          messages: [{ role: 'user', content: '.' }]
+        }),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private cache(
+    snapshot: RateLimitSnapshot | undefined,
+    nowMs: number,
+    ttlMs = RATE_LIMIT_REFRESH_MS
+  ): RateLimitSnapshot | undefined {
     this.cached = snapshot;
     this.cachedAtMs = nowMs;
+    this.cachedTtlMs = ttlMs;
     return snapshot;
   }
 
