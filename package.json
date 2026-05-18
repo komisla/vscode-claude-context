@@ -27,8 +27,8 @@
       "properties": {
         "claudeContext.hideBelow": {
           "type": "number",
-          "default": 40,
-          "description": "Hide status bar indicator when context fill is below this percentage"
+          "default": 0,
+          "description": "Hide status bar indicator when context fill is below this percentage. 0 (default) keeps it always visible."
         },
         "claudeContext.showHistoricalUsage": {
           "type": "boolean",
