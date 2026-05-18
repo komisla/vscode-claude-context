@@ -4,10 +4,28 @@
   "description": "Live Claude Code context window monitor with traffic-light status bar and token breakdown panel",
   "version": "0.1.0",
   "publisher": "komisla",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/komisla/vscode-claude-context"
+  },
+  "bugs": {
+    "url": "https://github.com/komisla/vscode-claude-context/issues"
+  },
+  "homepage": "https://github.com/komisla/vscode-claude-context",
+  "keywords": [
+    "claude",
+    "claude code",
+    "context window",
+    "token usage",
+    "anthropic",
+    "AI"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
   "activationEvents": [
