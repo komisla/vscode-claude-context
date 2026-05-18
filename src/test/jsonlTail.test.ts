@@ -295,6 +295,107 @@ test('findActiveSession prefers the newest lock file when jsonl mtimes disagree'
   }
 });
 
+test('findActiveSession ignores stale locks when the jsonl is stale too', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-stale-lock-'));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const ideRoot = path.join(claudeRoot, 'ide');
+  const workspaceA = path.join(root, 'workspace-a');
+  const workspaceB = path.join(root, 'workspace-b');
+  const projectA = path.join(claudeRoot, 'projects', slugify(workspaceA));
+  const projectB = path.join(claudeRoot, 'projects', slugify(workspaceB));
+  const jsonlA = path.join(projectA, 'session.jsonl');
+  const jsonlB = path.join(projectB, 'session.jsonl');
+  const lockA = path.join(ideRoot, 'a.lock');
+  const lockB = path.join(ideRoot, 'b.lock');
+
+  await mkdir(ideRoot, { recursive: true });
+  await mkdir(projectA, { recursive: true });
+  await mkdir(projectB, { recursive: true });
+
+  const originalEnv = snapshotProcessEnv();
+  applyClaudeHome(homeDir);
+
+  await writeFile(lockA, JSON.stringify({ workspaceFolders: [workspaceA] }));
+  await writeFile(lockB, JSON.stringify({ workspaceFolders: [workspaceB] }));
+  await writeFile(jsonlA, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 40))}\n`);
+  await writeFile(jsonlB, `${JSON.stringify(makeAssistantLine('2026-05-16T11:05:00Z', 20))}\n`);
+
+  const freshJsonlTime = new Date();
+  const olderActiveLockTime = new Date(Date.now() - 30 * 60 * 1000);
+  const staleWinningLockTime = new Date(Date.now() - 20 * 60 * 1000);
+
+  await utimes(lockA, olderActiveLockTime, olderActiveLockTime);
+  await utimes(jsonlA, freshJsonlTime, freshJsonlTime);
+  await utimes(lockB, staleWinningLockTime, staleWinningLockTime);
+  await utimes(jsonlB, staleWinningLockTime, staleWinningLockTime);
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([workspaceA, workspaceB]));
+
+  try {
+    const session = await (dataSource as unknown as {
+      findActiveSession: () => Promise<{ readonly projectDir: string; readonly jsonlPath: string } | undefined>;
+    }).findActiveSession();
+
+    assert.equal(session?.projectDir, projectA);
+    assert.equal(session?.jsonlPath, jsonlA);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('findActiveSession falls back to the newest lock when all matches are stale', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-all-stale-locks-'));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const ideRoot = path.join(claudeRoot, 'ide');
+  const workspaceA = path.join(root, 'workspace-a');
+  const workspaceB = path.join(root, 'workspace-b');
+  const projectA = path.join(claudeRoot, 'projects', slugify(workspaceA));
+  const projectB = path.join(claudeRoot, 'projects', slugify(workspaceB));
+  const jsonlA = path.join(projectA, 'session.jsonl');
+  const jsonlB = path.join(projectB, 'session.jsonl');
+  const lockA = path.join(ideRoot, 'a.lock');
+  const lockB = path.join(ideRoot, 'b.lock');
+
+  await mkdir(ideRoot, { recursive: true });
+  await mkdir(projectA, { recursive: true });
+  await mkdir(projectB, { recursive: true });
+
+  const originalEnv = snapshotProcessEnv();
+  applyClaudeHome(homeDir);
+
+  await writeFile(lockA, JSON.stringify({ workspaceFolders: [workspaceA] }));
+  await writeFile(lockB, JSON.stringify({ workspaceFolders: [workspaceB] }));
+  await writeFile(jsonlA, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 20))}\n`);
+  await writeFile(jsonlB, `${JSON.stringify(makeAssistantLine('2026-05-16T11:05:00Z', 40))}\n`);
+
+  const staleOlderTime = new Date(Date.now() - 30 * 60 * 1000);
+  const staleNewerTime = new Date(Date.now() - 20 * 60 * 1000);
+
+  await utimes(lockA, staleOlderTime, staleOlderTime);
+  await utimes(jsonlA, staleOlderTime, staleOlderTime);
+  await utimes(lockB, staleNewerTime, staleNewerTime);
+  await utimes(jsonlB, staleOlderTime, staleOlderTime);
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([workspaceA, workspaceB]));
+
+  try {
+    const session = await (dataSource as unknown as {
+      findActiveSession: () => Promise<{ readonly projectDir: string; readonly jsonlPath: string } | undefined>;
+    }).findActiveSession();
+
+    assert.equal(session?.projectDir, projectB);
+    assert.equal(session?.jsonlPath, jsonlB);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('findActiveSession breaks equal mtime ties by lock path', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-lock-tie-'));
   const homeDir = path.join(root, 'home');
