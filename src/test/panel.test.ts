@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { BreakdownPanel } from '../webview/panel';
 import type { ContextDataSource, ContextUpdate } from '../dataSource';
 import type { HistoricalUsageReader, HistoricalUsageSnapshot } from '../dataSource/historicalUsage';
+import type { RateLimitReader, RateLimitSnapshot } from '../dataSource/rateLimit';
 
 interface VscodeMock {
   readonly resetMockState: () => void;
@@ -51,14 +52,19 @@ function createSource(initial: ContextUpdate) {
   };
 }
 
-function makeHistorySnapshot(pct5h: number, pct7d: number): HistoricalUsageSnapshot {
+function makeHistorySnapshot(): HistoricalUsageSnapshot {
   return {
     tokens5h: 0,
     tokens7d: 0,
-    pct5h,
-    pct7d,
     hasData: true,
     byModel: new Map()
+  };
+}
+
+function makeRateLimitSnapshot(): RateLimitSnapshot {
+  return {
+    pct5h: 20,
+    pct7d: 30
   };
 }
 
@@ -93,15 +99,18 @@ test('BreakdownPanel throttles historical usage refreshes', async () => {
   const historicalUsage = {
     refresh: async () => {
       refreshCalls += 1;
-      return makeHistorySnapshot(20, 30);
+      return makeHistorySnapshot();
     }
   } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 35
   });
 
-  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
 
   try {
     panel.open(tracker.source);
@@ -146,15 +155,18 @@ test('BreakdownPanel retries historical usage refreshes after failures', async (
         throw new Error('temporary history failure');
       }
 
-      return makeHistorySnapshot(20, 30);
+      return makeHistorySnapshot();
     }
   } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 35
   });
 
-  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
 
   try {
     panel.open(tracker.source);
@@ -182,14 +194,17 @@ test('BreakdownPanel tears down subscriptions when the panel closes', async () =
   });
 
   const historicalUsage = {
-    refresh: async () => makeHistorySnapshot(0, 0)
+    refresh: async () => makeHistorySnapshot()
   } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 45
   });
 
-  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
   panel.open(tracker.source);
 
   assert.equal(vscodeMock.window.webviewPanels.length, 1);
@@ -220,14 +235,17 @@ test('BreakdownPanel falls back when openExternal is unavailable', async () => {
   vscodeMock.env.openExternalResult = false;
 
   const historicalUsage = {
-    refresh: async () => makeHistorySnapshot(0, 0)
+    refresh: async () => makeHistorySnapshot()
   } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 45
   });
 
-  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
   panel.open(tracker.source);
 
   assert.equal(vscodeMock.window.webviewPanels.length, 1);
@@ -262,14 +280,17 @@ test('BreakdownPanel skips openExternal when Claude Code extension is missing', 
   });
 
   const historicalUsage = {
-    refresh: async () => makeHistorySnapshot(0, 0)
+    refresh: async () => makeHistorySnapshot()
   } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 45
   });
 
-  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
   panel.open(tracker.source);
 
   assert.equal(vscodeMock.window.webviewPanels.length, 1);
@@ -305,14 +326,17 @@ test('BreakdownPanel opens new chat URI when Claude Code extension is installed'
   vscodeMock.setExtension(CLAUDE_CODE_EXTENSION_ID, fakeClaudeCodeExtension);
 
   const historicalUsage = {
-    refresh: async () => makeHistorySnapshot(0, 0)
+    refresh: async () => makeHistorySnapshot()
   } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 45
   });
 
-  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
   panel.open(tracker.source);
 
   assert.equal(vscodeMock.window.webviewPanels.length, 1);
@@ -345,14 +369,17 @@ test('BreakdownPanel injects a hex nonce into the webview HTML', async () => {
   vscodeMock.resetMockState();
 
   const historicalUsage = {
-    refresh: async () => makeHistorySnapshot(0, 0)
+    refresh: async () => makeHistorySnapshot()
   } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 45
   });
 
-  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage);
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
   panel.open(tracker.source);
 
   assert.equal(vscodeMock.window.webviewPanels.length, 1);

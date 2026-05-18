@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 import { StatusBarController } from '../statusBar';
 import type { ContextUpdate } from '../dataSource';
-import type { HistoricalUsageReader, HistoricalUsageSnapshot } from '../dataSource/historicalUsage';
+import type { RateLimitReader, RateLimitSnapshot } from '../dataSource/rateLimit';
 
 interface VscodeMock {
   readonly resetMockState: () => void;
@@ -43,14 +43,10 @@ function createSource(initial: ContextUpdate) {
   };
 }
 
-function makeHistorySnapshot(): HistoricalUsageSnapshot {
+function makeRateLimitSnapshot(): RateLimitSnapshot {
   return {
-    tokens5h: 0,
-    tokens7d: 0,
     pct5h: 0,
-    pct7d: 0,
-    hasData: false,
-    byModel: new Map()
+    pct7d: 0
   };
 }
 
@@ -69,7 +65,7 @@ async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-test('StatusBarController applies thresholds and starts and stops the history timer', async () => {
+test('StatusBarController applies thresholds and starts and stops the rate-limit timer', async () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
@@ -77,9 +73,9 @@ test('StatusBarController applies thresholds and starts and stops the history ti
     showHistoricalUsage: true
   });
 
-  const historicalUsage = {
-    refresh: async () => makeHistorySnapshot()
-  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 39,
@@ -88,14 +84,14 @@ test('StatusBarController applies thresholds and starts and stops the history ti
     effectiveWindow: 100_000
   });
 
-  const controller = new StatusBarController(tracker.source, historicalUsage);
+  const controller = new StatusBarController(tracker.source, rateLimit);
   const item = vscodeMock.window.statusBarItems[0];
 
   assert.equal(vscodeMock.window.statusBarItems.length, 1);
   assert.equal(item.visible, true);
   assert.equal(item.text, '$(hubot) ctx idle');
   assert.equal(item.backgroundColor, undefined);
-  assert.equal((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
+  assert.equal((controller as unknown as { rateLimitRefreshTimer: unknown }).rateLimitRefreshTimer, undefined);
 
   tracker.fire({
     fillPercent: 39,
@@ -117,7 +113,7 @@ test('StatusBarController applies thresholds and starts and stops the history ti
   assert.equal(item.visible, true);
   assert.equal(item.text, '$(hubot) ctx 50%');
   assert.equal(item.backgroundColor!.id, 'statusBarItem.warningBackground');
-  assert.notEqual((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
+  assert.notEqual((controller as unknown as { rateLimitRefreshTimer: unknown }).rateLimitRefreshTimer, undefined);
 
   tracker.fire({
     fillPercent: 65,
@@ -138,7 +134,7 @@ test('StatusBarController applies thresholds and starts and stops the history ti
 
   assert.equal(item.visible, false);
   assert.equal(item.hideCount >= 2, true);
-  assert.equal((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
+  assert.equal((controller as unknown as { rateLimitRefreshTimer: unknown }).rateLimitRefreshTimer, undefined);
 
   controller.dispose();
   tracker.source.dispose();
@@ -152,13 +148,13 @@ test('StatusBarController shows an idle indicator when no fillPercent is availab
     showHistoricalUsage: false
   });
 
-  const historicalUsage = {
-    refresh: async () => makeHistorySnapshot()
-  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({ error: 'Claude Code session not found' });
 
-  const controller = new StatusBarController(tracker.source, historicalUsage);
+  const controller = new StatusBarController(tracker.source, rateLimit);
   const item = vscodeMock.window.statusBarItems[0];
 
   assert.equal(item.visible, true);
@@ -177,13 +173,13 @@ test('StatusBarController stays visible at low fillPercent when hideBelow is 0',
     showHistoricalUsage: false
   });
 
-  const historicalUsage = {
-    refresh: async () => makeHistorySnapshot()
-  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({ error: 'Claude Code session not found' });
 
-  const controller = new StatusBarController(tracker.source, historicalUsage);
+  const controller = new StatusBarController(tracker.source, rateLimit);
   const item = vscodeMock.window.statusBarItems[0];
 
   tracker.fire({
@@ -201,7 +197,7 @@ test('StatusBarController stays visible at low fillPercent when hideBelow is 0',
   tracker.source.dispose();
 });
 
-test('StatusBarController ignores a late history refresh after dispose', async () => {
+test('StatusBarController ignores a late rate-limit refresh after dispose', async () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
   vscodeMock.setWorkspaceConfiguration('claudeContext', {
@@ -209,10 +205,10 @@ test('StatusBarController ignores a late history refresh after dispose', async (
     showHistoricalUsage: true
   });
 
-  const pending = deferred<HistoricalUsageSnapshot>();
-  const historicalUsage = {
+  const pending = deferred<RateLimitSnapshot>();
+  const rateLimit = {
     refresh: async () => pending.promise
-  } as unknown as HistoricalUsageReader;
+  } as unknown as RateLimitReader;
 
   const tracker = createSource({
     fillPercent: 70,
@@ -221,7 +217,7 @@ test('StatusBarController ignores a late history refresh after dispose', async (
     effectiveWindow: 100_000
   });
 
-  const controller = new StatusBarController(tracker.source, historicalUsage);
+  const controller = new StatusBarController(tracker.source, rateLimit);
   const item = vscodeMock.window.statusBarItems[0];
 
   tracker.fire({
@@ -233,22 +229,18 @@ test('StatusBarController ignores a late history refresh after dispose', async (
 
   assert.equal(item.visible, true);
   assert.equal(item.showCount, 2);
-  assert.notEqual((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
+  assert.notEqual((controller as unknown as { rateLimitRefreshTimer: unknown }).rateLimitRefreshTimer, undefined);
 
   controller.dispose();
   pending.resolve({
-    tokens5h: 1,
-    tokens7d: 1,
     pct5h: 1,
-    pct7d: 1,
-    hasData: true,
-    byModel: new Map()
+    pct7d: 1
   });
   await flush();
 
   assert.equal(item.showCount, 2);
   assert.equal(item.hideCount, 0);
-  assert.equal((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
+  assert.equal((controller as unknown as { rateLimitRefreshTimer: unknown }).rateLimitRefreshTimer, undefined);
 
   tracker.source.dispose();
 });

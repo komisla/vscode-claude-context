@@ -88,13 +88,11 @@ test('historical reader scans jsonl recursively and buckets 5h and 7d windows', 
     );
 
     const reader = new HistoricalUsageReader(root);
-    const snapshot = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    const snapshot = await reader.refresh(NOW);
 
     assert.equal(snapshot.hasData, true);
     assert.equal(snapshot.tokens5h, 100);
     assert.equal(snapshot.tokens7d, 300);
-    assert.equal(snapshot.pct5h, 10);
-    assert.equal(snapshot.pct7d, 30);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -118,7 +116,7 @@ test('historical reader groups usage by model', async () => {
     );
 
     const reader = new HistoricalUsageReader(root);
-    const snapshot = await reader.refresh({ budget5h: 1_000, budget7d: 2_000 }, NOW);
+    const snapshot = await reader.refresh(NOW);
 
     assert.deepEqual(snapshot.byModel.get('claude-sonnet-4-6'), {
       tokens5h: 100,
@@ -152,7 +150,7 @@ test('historical reader refreshes changed files', async () => {
     await utimes(filePath, fixedTime, fixedTime);
 
     const reader = new HistoricalUsageReader(root);
-    const first = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    const first = await reader.refresh(NOW);
     assert.equal(first.tokens5h, 100);
 
     await writeFile(
@@ -163,7 +161,7 @@ test('historical reader refreshes changed files', async () => {
       ].join('\n') + '\n'
     );
 
-    const second = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    const second = await reader.refresh(NOW);
     assert.equal(second.tokens5h, 500);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -185,12 +183,12 @@ test('historical reader re-reads truncated files from scratch', async () => {
     await writeFile(filePath, `${firstLine}\n${secondLine}\n`);
 
     const reader = new HistoricalUsageReader(root);
-    const first = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    const first = await reader.refresh(NOW);
     assert.equal(first.tokens5h, 300);
 
     await writeFile(filePath, `${truncatedLine}\n`);
 
-    const second = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    const second = await reader.refresh(NOW);
     assert.equal(second.tokens5h, 400);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -216,14 +214,14 @@ test('historical reader ignores touch-only mtime changes when file size is uncha
       return originalReadEntireFile(jsonlPath, minTimestamp);
     };
 
-    const first = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    const first = await reader.refresh(NOW);
     assert.equal(first.tokens5h, 100);
     assert.equal(readEntireFileCalls, 1);
 
     const current = new Date('2026-05-16T11:30:00Z');
     await utimes(filePath, current, current);
 
-    const second = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    const second = await reader.refresh(NOW);
     assert.equal(second.tokens5h, 100);
     assert.equal(readEntireFileCalls, 1);
   } finally {
@@ -239,12 +237,12 @@ test('historical reader prunes stale cached entries on cache hits', async () => 
     await writeFile(filePath, `${JSON.stringify(makeAssistantLine('2026-05-10T12:00:00Z', 100))}\n`);
 
     const reader = new HistoricalUsageReader(root);
-    const first = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    const first = await reader.refresh(NOW);
     assert.equal(first.tokens7d, 100);
     assert.equal(first.hasData, true);
 
     const later = Date.parse('2026-05-24T12:00:00Z');
-    const second = await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, later);
+    const second = await reader.refresh(later);
 
     assert.equal(second.tokens7d, 0);
     assert.equal(second.hasData, false);
@@ -274,8 +272,8 @@ test('historical reader deduplicates concurrent refresh work', async () => {
     await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
   };
 
-  const first = reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
-  const second = reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+  const first = reader.refresh(NOW);
+  const second = reader.refresh(NOW);
   const [firstSnapshot, secondSnapshot] = await Promise.all([first, second]);
 
   assert.equal(findCalls, 1);
@@ -304,7 +302,7 @@ test('historical reader prunes stale directory cache entries on refresh', async 
       entries: []
     });
 
-    await reader.refresh({ budget5h: 1_000, budget7d: 1_000 }, NOW);
+    await reader.refresh(NOW);
 
     assert.equal(mutable.directoryCache.has(staleDirectory), false);
     assert.equal(mutable.directoryCache.has(root), true);

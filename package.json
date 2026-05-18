@@ -33,17 +33,7 @@
         "claudeContext.showHistoricalUsage": {
           "type": "boolean",
           "default": true,
-          "description": "Show 5h and 7d token usage in status bar"
-        },
-        "claudeContext.budget5h": {
-          "type": "number",
-          "default": 5000000,
-          "description": "Token budget for the 5-hour window (adjust to your Claude plan)"
-        },
-        "claudeContext.budget7d": {
-          "type": "number",
-          "default": 50000000,
-          "description": "Token budget for the 7-day window (adjust to your Claude plan)"
+          "description": "Show 5h and 7d Claude plan utilization in status bar"
         }
       }
     }
