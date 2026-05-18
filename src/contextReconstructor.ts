@@ -1,6 +1,7 @@
 import { createReadStream, promises as fsp } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as process from 'process';
 import { createInterface } from 'readline';
 import { encode } from 'gpt-tokenizer';
 import type { ContextUpdate } from './dataSource';
@@ -676,10 +677,15 @@ function isAllowedClaudeMdImport(
 }
 
 function isPathWithinRoot(candidatePath: string, root: string): boolean {
-  const resolvedRoot = path.resolve(root);
-  const relative = path.relative(resolvedRoot, candidatePath);
+  const resolvedRoot = normalizePathForRootComparison(path.resolve(root));
+  const resolvedCandidate = normalizePathForRootComparison(path.resolve(candidatePath));
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
 
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function normalizePathForRootComparison(filePath: string): string {
+  return process.platform === 'win32' ? filePath.toLowerCase() : filePath;
 }
 
 function getStringArray(value: unknown): readonly string[] {
