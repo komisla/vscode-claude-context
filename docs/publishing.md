@@ -11,7 +11,7 @@ Publisher ID: TBD (set up at https://marketplace.visualstudio.com/manage)
 
 ## `.vscodeignore`
 
-Controls what goes into the `.vsix` package. `src/`, `docs/`, `.claude/` are excluded — only `out/` (compiled JS) and `package.json` are included.
+Controls what goes into the `.vsix` package. This repo keeps only runtime files (`dist/`, `package.json`, `README.md`, and `LICENSE` if present) and excludes source, tests, docs, editor config, and Claude workspace files.
 
 ## Release checklist
 
