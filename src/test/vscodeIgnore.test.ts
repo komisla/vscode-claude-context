@@ -13,4 +13,5 @@ test('.vscodeignore excludes non-runtime artifacts from the published package', 
   assert.match(ignore, /package-lock\.json/);
   assert.match(ignore, /out\//);
   assert.match(ignore, /src\//);
+  assert.doesNotMatch(ignore, /^dist\//m);
 });
