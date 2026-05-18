@@ -312,6 +312,36 @@ test('historical reader prunes stale directory cache entries on refresh', async 
   }
 });
 
+test('historical reader removes deleted project directories from directory cache', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-dir-delete-'));
+
+  try {
+    const projectDir = path.join(root, 'deleted-project');
+    const filePath = path.join(projectDir, 'session.jsonl');
+
+    await mkdir(projectDir);
+    await writeFile(filePath, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`);
+
+    const reader = new HistoricalUsageReader(root);
+    const mutable = reader as unknown as {
+      directoryCache: Map<string, { readonly mtimeMs: number; readonly entries: readonly unknown[] }>;
+    };
+
+    await reader.refresh(NOW);
+
+    assert.equal(mutable.directoryCache.has(root), true);
+    assert.equal(mutable.directoryCache.has(projectDir), true);
+
+    await rm(projectDir, { recursive: true, force: true });
+    await reader.refresh(NOW);
+
+    assert.equal(mutable.directoryCache.has(root), true);
+    assert.equal(mutable.directoryCache.has(projectDir), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function makeAssistantLine(timestamp: string, inputTokens: number, model?: unknown): unknown {
   return {
     timestamp,
