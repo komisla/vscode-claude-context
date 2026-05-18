@@ -87,7 +87,7 @@ test('readLockFiles prunes stale cache entries on cache hit', async () => {
     const staleLockPath = path.join(ideRoot, 'stale.lock');
     const mutable = dataSource as unknown as {
       ideDirectoryCache: { readonly mtimeMs: number; readonly lockPaths: string[] } | undefined;
-      lockCache: Map<string, { readonly workspaceFolders: readonly string[] }>;
+      lockCache: Map<string, { readonly mtimeMs: number; readonly workspaceFolders: readonly string[] }>;
       readLockFiles: () => Promise<string[]>;
     };
 
@@ -96,8 +96,8 @@ test('readLockFiles prunes stale cache entries on cache hit', async () => {
       lockPaths: [activeLockPath]
     };
     mutable.lockCache = new Map([
-      [activeLockPath, { workspaceFolders: [activeLockPath] }],
-      [staleLockPath, { workspaceFolders: [staleLockPath] }]
+      [activeLockPath, { mtimeMs: stats.mtimeMs, workspaceFolders: [activeLockPath] }],
+      [staleLockPath, { mtimeMs: stats.mtimeMs, workspaceFolders: [staleLockPath] }]
     ]);
 
     const lockPaths = await mutable.readLockFiles();
@@ -108,6 +108,42 @@ test('readLockFiles prunes stale cache entries on cache hit', async () => {
   } finally {
     dataSource.dispose();
     restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('readLock invalidates cached workspace folders when lock mtime changes', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-lock-cache-'));
+  const lockPath = path.join(root, 'active.lock');
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+
+  try {
+    await writeFile(lockPath, JSON.stringify({ workspaceFolders: ['workspace-a'] }));
+    const firstTime = new Date('2026-05-16T11:00:00Z');
+    await utimes(lockPath, firstTime, firstTime);
+    const firstStats = await fsp.stat(lockPath);
+    const mutable = dataSource as unknown as {
+      lockCache: Map<string, { readonly mtimeMs: number; readonly workspaceFolders: readonly string[] }>;
+      readLock: (
+        lockPath: string,
+        lockMtimeMs: number
+      ) => Promise<{ readonly workspaceFolders: readonly string[] }>;
+    };
+
+    const firstLock = await mutable.readLock(lockPath, firstStats.mtimeMs);
+    assert.deepEqual(firstLock.workspaceFolders, ['workspace-a']);
+
+    await writeFile(lockPath, JSON.stringify({ workspaceFolders: ['workspace-b'] }));
+    const secondTime = new Date('2026-05-16T11:01:00Z');
+    await utimes(lockPath, secondTime, secondTime);
+    const secondStats = await fsp.stat(lockPath);
+
+    const secondLock = await mutable.readLock(lockPath, secondStats.mtimeMs);
+
+    assert.deepEqual(secondLock.workspaceFolders, ['workspace-b']);
+    assert.equal(mutable.lockCache.get(lockPath)?.mtimeMs, secondStats.mtimeMs);
+  } finally {
+    dataSource.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -201,7 +237,10 @@ test('findActiveSession resolves locks sequentially', async () => {
   const dataSource = new JsonlTailDataSource(vscodeApi);
   const mutable = dataSource as unknown as {
     readLockFiles: () => Promise<string[]>;
-    readLock: (lockPath: string) => Promise<{ readonly workspaceFolders: readonly string[] }>;
+    readLock: (
+      lockPath: string,
+      lockMtimeMs: number
+    ) => Promise<{ readonly workspaceFolders: readonly string[] }>;
     findNewestJsonl: (dir: string) => Promise<{ readonly path: string; readonly mtimeMs: number } | undefined>;
     findActiveSession: () => Promise<{ readonly projectDir: string; readonly jsonlPath: string } | undefined>;
   };
@@ -211,6 +250,10 @@ test('findActiveSession resolves locks sequentially', async () => {
   let readLockCalls = 0;
 
   try {
+    for (const lockPath of lockPaths) {
+      await writeFile(lockPath, JSON.stringify({ workspaceFolders: [workspaceRoot] }));
+    }
+
     await delay(25);
     await (dataSource as unknown as { refreshing?: Promise<void> }).refreshing;
 

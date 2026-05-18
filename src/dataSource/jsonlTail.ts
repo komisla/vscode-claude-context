@@ -46,6 +46,7 @@ interface ResolvedLockSession {
 }
 
 interface CachedLockFile {
+  readonly mtimeMs: number;
   readonly workspaceFolders: string[];
 }
 
@@ -573,7 +574,16 @@ export class JsonlTailDataSource implements ContextDataSource {
     const lockResults: Array<ResolvedLockSession | undefined> = [];
 
     for (const lockPath of locks) {
-      const lock = await this.readLock(lockPath);
+      let lockStats: fs.Stats;
+
+      try {
+        lockStats = await fsp.stat(lockPath);
+      } catch {
+        lockResults.push(undefined);
+        continue;
+      }
+
+      const lock = await this.readLock(lockPath, lockStats.mtimeMs);
       const matchedFolder = lock.workspaceFolders.find((folder) =>
         normalizedWorkspaceFolders.includes(normalizeWorkspacePath(folder))
       );
@@ -587,15 +597,6 @@ export class JsonlTailDataSource implements ContextDataSource {
       const jsonl = await this.findNewestJsonl(projectDir);
 
       if (jsonl === undefined) {
-        lockResults.push(undefined);
-        continue;
-      }
-
-      let lockStats: fs.Stats;
-
-      try {
-        lockStats = await fsp.stat(lockPath);
-      } catch {
         lockResults.push(undefined);
         continue;
       }
@@ -692,11 +693,18 @@ export class JsonlTailDataSource implements ContextDataSource {
     return lockPaths;
   }
 
-  private async readLock(lockPath: string): Promise<{ readonly workspaceFolders: readonly string[] }> {
+  private async readLock(
+    lockPath: string,
+    lockMtimeMs: number
+  ): Promise<{ readonly workspaceFolders: readonly string[] }> {
     const cached = this.lockCache.get(lockPath);
 
-    if (cached !== undefined) {
+    if (cached !== undefined && cached.mtimeMs === lockMtimeMs) {
       return { workspaceFolders: cached.workspaceFolders };
+    }
+
+    if (cached !== undefined) {
+      this.lockCache.delete(lockPath);
     }
 
     let raw: string;
@@ -719,7 +727,7 @@ export class JsonlTailDataSource implements ContextDataSource {
         (folder): folder is string => typeof folder === 'string'
       );
 
-      this.lockCache.set(lockPath, { workspaceFolders });
+      this.lockCache.set(lockPath, { mtimeMs: lockMtimeMs, workspaceFolders });
 
       return { workspaceFolders };
     } catch {
