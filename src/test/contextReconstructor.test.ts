@@ -212,6 +212,32 @@ test('rejects @ imports outside workspace root and home dir', async () => {
   }
 });
 
+test(
+  'counts CLAUDE.md imports when Windows drive-letter case differs',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'claude-context-drive-case-'));
+
+    try {
+      const homeDir = path.join(root, 'home');
+      const workspaceRoot = path.join(root, 'repo', 'app');
+      await mkdir(workspaceRoot, { recursive: true });
+
+      const workspaceClaude = 'workspace rules @./allowed.md';
+      const importContent = 'allowed import despite drive-letter case mismatch';
+      await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+      await writeFile(path.join(workspaceRoot, 'allowed.md'), importContent);
+
+      const mismatchedWorkspaceRoot = flipWindowsDriveLetterCase(workspaceRoot);
+      const expected = countTokens(workspaceClaude) + countTokens(importContent);
+
+      assert.equal(await countClaudeMdTokens(mismatchedWorkspaceRoot, homeDir), expected);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+);
+
 test('limits CLAUDE.md import recursion depth to 10 levels', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-import-depth-'));
 
@@ -925,4 +951,16 @@ function makeToolDelta(addedNames: readonly string[]): string {
       addedNames
     }
   });
+}
+
+function flipWindowsDriveLetterCase(filePath: string): string {
+  if (!/^[a-z]:/i.test(filePath)) {
+    return filePath;
+  }
+
+  const driveLetter = filePath[0];
+  const flippedDriveLetter =
+    driveLetter === driveLetter.toUpperCase() ? driveLetter.toLowerCase() : driveLetter.toUpperCase();
+
+  return `${flippedDriveLetter}${filePath.slice(1)}`;
 }
