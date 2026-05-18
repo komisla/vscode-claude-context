@@ -293,10 +293,12 @@ export class JsonlTailDataSource implements ContextDataSource {
    * removing temp directories. Safe to call before or after dispose().
    */
   public async whenIdle(): Promise<void> {
-    const inFlight = this.refreshing ?? this.pollInFlight ?? this.pendingDispose;
+    const pending = [this.refreshing, this.pollInFlight, this.pendingDispose].filter(
+      (work): work is Promise<void> => work !== undefined
+    );
 
-    if (inFlight !== undefined) {
-      await inFlight.catch(() => undefined);
+    if (pending.length > 0) {
+      await Promise.all(pending).catch(() => undefined);
     }
   }
 
