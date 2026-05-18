@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -178,6 +179,60 @@ test('historical reader refreshes changed files', async () => {
   }
 });
 
+test('historical reader does not skip unread tail bytes after partial reads', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-partial-read-'));
+
+  try {
+    const filePath = path.join(root, 'session.jsonl');
+    const baseLine = `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`;
+    const firstAppendLine = `${JSON.stringify(makeAssistantLine('2026-05-16T11:30:00Z', 200))}\n`;
+    const secondAppendLine = `${JSON.stringify(makeAssistantLine('2026-05-16T11:45:00Z', 300))}\n`;
+
+    await writeFile(filePath, baseLine);
+
+    const reader = new HistoricalUsageReader(root);
+    const first = await reader.refresh(NOW);
+    assert.equal(first.tokens5h, 100);
+
+    const mutable = reader as unknown as {
+      readTailChunk: (
+        jsonlPath: string,
+        offset: number,
+        remainder: string,
+        size: number,
+        minTimestamp: number
+      ) => Promise<{ readonly entries: readonly unknown[]; readonly bytesRead: number; readonly remainder: string }>;
+    };
+    const originalReadTailChunk = mutable.readTailChunk.bind(reader);
+    let limitNextTailRead = true;
+
+    mutable.readTailChunk = async (jsonlPath, offset, remainder, size, minTimestamp) => {
+      if (!limitNextTailRead) {
+        return originalReadTailChunk(jsonlPath, offset, remainder, size, minTimestamp);
+      }
+
+      limitNextTailRead = false;
+      return originalReadTailChunk(
+        jsonlPath,
+        offset,
+        remainder,
+        offset + Buffer.byteLength(firstAppendLine),
+        minTimestamp
+      );
+    };
+
+    await writeFile(filePath, `${baseLine}${firstAppendLine}${secondAppendLine}`);
+
+    const second = await reader.refresh(NOW);
+    assert.equal(second.tokens5h, 300);
+
+    const third = await reader.refresh(NOW);
+    assert.equal(third.tokens5h, 600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('historical reader re-reads truncated files from scratch', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-history-truncate-'));
 
@@ -200,6 +255,37 @@ test('historical reader re-reads truncated files from scratch', async () => {
 
     const second = await reader.refresh(NOW);
     assert.equal(second.tokens5h, 400);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('historical reader prunes stale offsets and remainders for deleted files', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-file-cache-delete-'));
+
+  try {
+    const projectDir = path.join(root, 'project');
+    const filePath = path.join(projectDir, 'session.jsonl');
+
+    await mkdir(projectDir);
+    await writeFile(filePath, `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`);
+
+    const reader = new HistoricalUsageReader(root);
+    const mutable = reader as unknown as {
+      fileOffsets: Map<string, number>;
+      fileRemainders: Map<string, string>;
+    };
+
+    await reader.refresh(NOW);
+
+    assert.equal(mutable.fileOffsets.has(filePath), true);
+    mutable.fileRemainders.set(filePath, 'partial-json');
+
+    await rm(filePath, { force: true });
+    await reader.refresh(NOW);
+
+    assert.equal(mutable.fileOffsets.has(filePath), false);
+    assert.equal(mutable.fileRemainders.has(filePath), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
