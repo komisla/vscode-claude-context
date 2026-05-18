@@ -532,7 +532,7 @@ test('JsonlTailDataSource emits updates when the active jsonl file is appended',
   }
 });
 
-test('JsonlTailDataSource seeds the offset on first encounter of an existing jsonl file', async () => {
+test('JsonlTailDataSource emits the latest existing turn on first encounter', async () => {
   const fixture = await createClaudeFixture('claude-jsonl-tail-offset-seed-');
   const originalEnv = snapshotProcessEnv();
 
@@ -547,8 +547,8 @@ test('JsonlTailDataSource seeds the offset on first encounter of an existing jso
   const dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]));
 
   try {
-    await delay(50);
-    assert.equal(dataSource.getLatest().error, 'Claude Code session not found');
+    const initialUpdate = await waitForUpdate(dataSource, (update) => update.totalTokens === 1);
+    assert.equal(initialUpdate.sessionPath, fixture.sessionPath);
 
     const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 250);
     await appendFile(
@@ -564,6 +564,44 @@ test('JsonlTailDataSource seeds the offset on first encounter of an existing jso
     assert.equal(update.sessionPath, fixture.sessionPath);
   } finally {
     dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource polls active jsonl appends without watcher events', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-poll-');
+  const originalEnv = snapshotProcessEnv();
+
+  applyClaudeHome(fixture.homeDir);
+  await writeFile(
+    fixture.sessionPath,
+    `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 10))}\n`
+  );
+
+  const fakeWatch = ((dir: string, listener: (event: string, filename: string | Buffer | null) => void) => {
+    void listener;
+    return new FakeWatcher(dir) as unknown as fs.FSWatcher;
+  }) as typeof fs.watch;
+  const dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]), fakeWatch);
+
+  try {
+    const initialUpdate = await waitForUpdate(dataSource, (update) => update.totalTokens === 10);
+    assert.equal(initialUpdate.sessionPath, fixture.sessionPath);
+
+    const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 200, 7_000);
+    await appendFile(
+      fixture.sessionPath,
+      `${JSON.stringify(makeAssistantLine('2026-05-16T11:01:00Z', 200))}\n`
+    );
+
+    const update = await nextUpdate;
+    assert.equal(update.totalTokens, 200);
+    assert.equal(update.sessionPath, fixture.sessionPath);
+  } finally {
+    dataSource.dispose();
+    assert.equal((dataSource as unknown as { pollTimer: unknown }).pollTimer, undefined);
+    await dataSource.whenIdle();
     restoreProcessEnv(originalEnv);
     await rm(fixture.root, { recursive: true, force: true });
   }

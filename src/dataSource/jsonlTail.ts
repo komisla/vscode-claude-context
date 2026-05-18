@@ -4,11 +4,12 @@ import { Buffer } from 'buffer';
 import * as os from 'os';
 import * as path from 'path';
 import * as process from 'process';
-import { clearTimeout, setTimeout } from 'timers';
+import { clearInterval, clearTimeout, setInterval, setTimeout } from 'timers';
 import type * as vscode from 'vscode';
 import type { ContextDataSource, ContextUpdate } from '.';
 
 const UPDATE_INTERVAL_MS = 5_000;
+const INITIAL_TAIL_READ_BYTES = 16 * 1_024;
 const CLAUDE_INTERNAL_RESERVE_TOKENS = 13_000;
 const WATCHER_ERROR_RETRY_MS = 30_000;
 const CLAUDE_ROOT_WATCHER_ERROR_RETRY_MS = 60_000;
@@ -198,6 +199,9 @@ export class JsonlTailDataSource implements ContextDataSource {
   private watchFactory: typeof fs.watch = fs.watch;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private tickTimer: ReturnType<typeof setTimeout> | undefined;
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private pollJsonlPath: string | undefined;
+  private pollInFlight: Promise<void> | undefined;
   private claudeRootWatcherRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private lastTickAt = 0;
   private pendingTick = false;
@@ -245,30 +249,34 @@ export class JsonlTailDataSource implements ContextDataSource {
       clearTimeout(this.tickTimer);
     }
 
+    this.clearActiveSessionPolling();
+
     if (this.claudeRootWatcherRetryTimer !== undefined) {
       clearTimeout(this.claudeRootWatcherRetryTimer);
     }
 
-    // Capture the in-flight refresh so any open file handles inside readNewBytes
-    // are released before callers (e.g. tests) tear down the directory. The
-    // VSCode Disposable contract requires dispose() to be synchronous, so the
-    // promise is exposed via whenIdle() rather than awaited here.
-    const pendingRefresh = this.refreshing;
-    if (pendingRefresh !== undefined) {
-      this.pendingDispose = pendingRefresh.catch(() => undefined);
+    // Capture in-flight work so any open file handles inside readNewBytes are
+    // released before callers (e.g. tests) tear down the directory. The VSCode
+    // Disposable contract requires dispose() to be synchronous, so the promise
+    // is exposed via whenIdle() rather than awaited here.
+    const pendingWork = [this.refreshing, this.pollInFlight].filter(
+      (work): work is Promise<void> => work !== undefined
+    );
+    if (pendingWork.length > 0) {
+      this.pendingDispose = Promise.all(pendingWork).then(() => undefined, () => undefined);
     }
 
     this.emitter.dispose();
   }
 
   /**
-   * Resolves once any in-flight refresh started before dispose() has settled,
+   * Resolves once any in-flight work started before dispose() has settled,
    * ensuring file handles opened by readNewBytes are closed. Tests and the
    * extension's deactivate path can await this to avoid Windows EBUSY when
    * removing temp directories. Safe to call before or after dispose().
    */
   public async whenIdle(): Promise<void> {
-    const inFlight = this.refreshing ?? this.pendingDispose;
+    const inFlight = this.refreshing ?? this.pollInFlight ?? this.pendingDispose;
 
     if (inFlight !== undefined) {
       await inFlight.catch(() => undefined);
@@ -483,6 +491,7 @@ export class JsonlTailDataSource implements ContextDataSource {
     const activeSession = await this.findActiveSession();
 
     if (activeSession === undefined) {
+      this.clearActiveSessionPolling();
       this.projectWatcher?.close();
       this.projectWatcher = undefined;
       this.currentProjectDir = undefined;
@@ -491,6 +500,7 @@ export class JsonlTailDataSource implements ContextDataSource {
     }
 
     this.watchProjectDir(activeSession.projectDir);
+    this.startActiveSessionPolling(activeSession.jsonlPath);
     await this.readNewBytes(activeSession.jsonlPath);
   }
 
@@ -705,7 +715,7 @@ export class JsonlTailDataSource implements ContextDataSource {
     const previousOffset = this.offsets.get(filePath);
 
     if (previousOffset === undefined) {
-      // Seed the offset at EOF on first encounter so we only read future appends.
+      await this.readLatestExistingUpdate(filePath, stats.size);
       this.offsets.set(filePath, stats.size);
       return;
     }
@@ -732,6 +742,47 @@ export class JsonlTailDataSource implements ContextDataSource {
 
       this.offsets.set(filePath, offset + bytesRead);
       this.consumeChunk(filePath, buffer.subarray(0, bytesRead).toString('utf8'));
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private async readLatestExistingUpdate(filePath: string, size: number): Promise<void> {
+    if (size <= 0) {
+      return;
+    }
+
+    const offset = Math.max(0, size - INITIAL_TAIL_READ_BYTES);
+    const length = size - offset;
+    const handle = await fsp.open(filePath, 'r');
+
+    try {
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, offset);
+      let lines = buffer.subarray(0, bytesRead).toString('utf8').split(/\r?\n/);
+
+      if (lines.at(-1) === '') {
+        lines = lines.slice(0, -1);
+      }
+
+      if (offset > 0) {
+        lines = lines.slice(1);
+      }
+
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const line = lines[index];
+
+        if (line.trim() === '') {
+          continue;
+        }
+
+        const update = parseContextUpdateFromLine(line, filePath);
+
+        if (update !== undefined) {
+          this.emitUpdate(update);
+          return;
+        }
+      }
     } finally {
       await handle.close();
     }
@@ -777,6 +828,43 @@ export class JsonlTailDataSource implements ContextDataSource {
     this.pendingTick = false;
     this.lastTickAt = Date.now();
     this.scheduleTick();
+  }
+
+  private startActiveSessionPolling(jsonlPath: string): void {
+    if (this.disposed) {
+      return;
+    }
+
+    if (this.pollTimer !== undefined && this.pollJsonlPath === jsonlPath) {
+      return;
+    }
+
+    this.clearActiveSessionPolling();
+    this.pollJsonlPath = jsonlPath;
+    this.pollTimer = setInterval(() => {
+      if (this.disposed || this.pollInFlight !== undefined) {
+        return;
+      }
+
+      this.pollInFlight = this.readNewBytes(jsonlPath)
+        .catch(() => {
+          if (!this.disposed) {
+            this.emitUpdate({ error: SESSION_NOT_FOUND_ERROR });
+          }
+        })
+        .finally(() => {
+          this.pollInFlight = undefined;
+        });
+    }, UPDATE_INTERVAL_MS);
+  }
+
+  private clearActiveSessionPolling(): void {
+    if (this.pollTimer !== undefined) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+
+    this.pollJsonlPath = undefined;
   }
 
   private scheduleClaudeRootWatcherRetry(): void {
