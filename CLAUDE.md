@@ -18,7 +18,7 @@ This extension shows the **live context state** — what is consuming tokens rig
 | Language | TypeScript 5.x |
 | Runtime | VSCode Extension API |
 | Build | webpack / esbuild |
-| Test | Mocha + `@vscode/test-electron` |
+| Test | `node:test` (built-in) |
 | Lint | ESLint + `@typescript-eslint` |
 | Package | `@vscode/vsce` |
 
@@ -28,7 +28,7 @@ This extension shows the **live context state** — what is consuming tokens rig
 
 | Question | Decision |
 |----------|----------|
-| Data source | TBD — core open question: how to read `/context` output into extension |
+| Data source | JSONL tail — `~/.claude/projects/<slug>/<session>.jsonl` |
 | Status bar | Lightweight, no blocking I/O on main thread |
 | File paths | Always `os.homedir()` equivalents — no hardcoded paths |
 | Storage | No `localStorage`/`sessionStorage` in WebView |

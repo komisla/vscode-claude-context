@@ -1,33 +1,59 @@
 # Architecture
 
-## Core question: data source
+## Data source: JSONL tailing
 
-The extension needs to know the current Claude Code context window breakdown (tokens by category).
+The extension reads Claude Code's JSONL session files from `~/.claude/projects/`. Each file records turns as newline-delimited JSON. The extension tails the active session file and reconstructs the context breakdown from the token usage fields in each turn.
 
-Options to evaluate:
-- **Parse `/context` terminal output** — watch Claude Code's stdout/stderr via a PTY or terminal integration
-- **Read a file** — check if Claude Code writes context state to `~/.claude/` (e.g. alongside JSONL logs)
-- **VSCode API hook** — intercept Claude Code extension output channel
-- **Polling `~/.claude/` state files** — if any reflect current session context
+No terminal interception, no VS Code API hooking, no network calls for context data.
 
-Decision: TBD — evaluate in first implementation issue.
+## Data flow
 
-## Components (planned)
+```text
+~/.claude/projects/<slug>/<session>.jsonl
+        │
+        ▼
+JsonlTailDataSource          ← tails JSONL, emits ContextSnapshot on change
+        │
+        ├──► StatusBarController   ← renders traffic-light status bar item
+        │
+        └──► BreakdownPanel        ← renders token breakdown in WebView
+                    │
+                    ├──► HistoricalUsageReader   ← scans all JSONL for 5h/7d token totals
+                    └──► RateLimitReader         ← optional: probes Anthropic API for rate-limit headers
+```
+
+## Source layout
 
 ```text
 src/
-  extension.ts        ← activate/deactivate, register commands
-  statusBar.ts        ← traffic-light status bar item
-  contextReader.ts    ← data source abstraction (TBD)
+  extension.ts                  ← activate/deactivate, wires all components
+  statusBar.ts                  ← traffic-light status bar item + rate-limit timer
+  statusBarFormatting.ts        ← label/tooltip formatting helpers
+  contextReconstructor.ts       ← parses JSONL turns into ContextSnapshot
+  dataSource/
+    jsonlTail.ts                ← JSONL tail, session lock detection, FSWatcher
+    historicalUsage.ts          ← scans all projects for 5h/7d token buckets
+    rateLimit.ts                ← Anthropic API probe for rate-limit headers
   webview/
-    panel.ts          ← breakdown panel lifecycle
-    dashboard.html    ← panel HTML template
+    panel.ts                    ← BreakdownPanel lifecycle, postSnapshot
+    dashboard.html              ← WebView HTML template (CSP-strict, nonce'd)
 ```
 
-## Status bar behavior
+## Status bar thresholds
 
-| Context fill | Color | Label |
-|-------------|-------|-------|
-| < 60 % | green | `ctx 42%` |
-| 60–75 % | yellow | `ctx 68%` |
-| > 75 % | red | `ctx 81%` |
+| Context fill | Color | ThemeColor |
+|-------------|-------|------------|
+| < 40 % | green | *(default)* |
+| 40–60 % | yellow | `statusBarItem.warningBackground` |
+| ≥ 60 % | red | `statusBarItem.errorBackground` |
+
+## Key decisions
+
+| Question | Decision |
+|----------|----------|
+| Data source | JSONL tail (`~/.claude/projects/`) — local, no network |
+| Session detection | Lock files in `~/.claude/ide/` identify the active project |
+| Token counting | `gpt-tokenizer` approximation for CLAUDE.md imports |
+| Polling | Max once per 5 s when active; idle detection via `whenIdle()` |
+| WebView storage | VS Code message passing only — no `localStorage`/`sessionStorage` |
+| Historical usage | Optional API probe (`showHistoricalUsage: false` by default) |
