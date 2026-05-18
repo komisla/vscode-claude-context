@@ -3,7 +3,7 @@ import { createReadStream, promises as fsp } from 'fs';
 import { createInterface } from 'readline';
 import * as os from 'os';
 import * as path from 'path';
-import { getUsageTotal, isAssistantTurn, normalizeModel } from './jsonlTail';
+import { isAssistantTurn, normalizeModel } from './jsonlTail';
 
 export const DEFAULT_BUDGET_5H = 5_000_000;
 export const DEFAULT_BUDGET_7D = 50_000_000;
@@ -411,9 +411,21 @@ export function parseHistoricalUsageLine(lineText: string): TokenEntry | undefin
 
   return {
     timestampMs,
-    tokens: getUsageTotal(line.message.usage),
+    tokens: getHistoricalBudgetTokens(line.message.usage),
     model: normalizeModel(line.message)
   };
+}
+
+function getHistoricalBudgetTokens(usage: unknown): number {
+  if (!isRecord(usage)) {
+    return 0;
+  }
+
+  return (
+    numberValue(usage.input_tokens) +
+    numberValue(usage.cache_creation_input_tokens) +
+    numberValue(usage.output_tokens)
+  );
 }
 
 function getModelUsage(
@@ -441,4 +453,8 @@ function calculateBudgetPercent(tokens: number, budget: number): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
