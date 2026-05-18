@@ -506,11 +506,17 @@ function extractAtImports(content: string): readonly string[] {
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`[^\n`]+`/g, ' ');
-  const regex = /(?:^|\s)@([^\s@]+)/g;
-  let match = regex.exec(stripped);
 
-  while (match !== null) {
-    const importPath = cleanImportPath(match[1]);
+  for (let index = 0; index < stripped.length; index += 1) {
+    if (stripped[index] !== '@') {
+      continue;
+    }
+
+    if (index > 0 && !/\s/.test(stripped[index - 1])) {
+      continue;
+    }
+
+    const importPath = readAtImportPath(stripped, index + 1);
 
     if (
       importPath !== '' &&
@@ -522,11 +528,37 @@ function extractAtImports(content: string): readonly string[] {
     ) {
       imports.push(importPath);
     }
-
-    match = regex.exec(stripped);
   }
 
   return imports;
+}
+
+function readAtImportPath(content: string, startIndex: number): string {
+  const firstChar = content[startIndex];
+
+  if (firstChar === '"' || firstChar === "'") {
+    const endIndex = content.indexOf(firstChar, startIndex + 1);
+
+    if (endIndex === -1) {
+      return '';
+    }
+
+    return cleanImportPath(content.slice(startIndex + 1, endIndex));
+  }
+
+  const lineEndIndex = content.indexOf('\n', startIndex);
+  const nextAtIndex = content.indexOf('@', startIndex);
+  const endIndex = [lineEndIndex, nextAtIndex]
+    .filter((candidate) => candidate !== -1)
+    .reduce((min, candidate) => Math.min(min, candidate), content.length);
+  const candidate = content.slice(startIndex, endIndex);
+  const markdownPathMatch = candidate.match(/^[\S ]+?\.md\b/i);
+
+  if (markdownPathMatch !== null) {
+    return cleanImportPath(markdownPathMatch[0]);
+  }
+
+  return cleanImportPath(candidate.split(/\s/, 1)[0] ?? '');
 }
 
 export function cleanImportPath(importPath: string): string {
