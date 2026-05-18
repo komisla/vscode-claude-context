@@ -845,6 +845,32 @@ test('scheduleTick queues a follow-up tick while refresh is in flight', async ()
   }
 });
 
+test('readLatestExistingUpdate keeps first tail line when offset starts after newline', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-boundary-'));
+  const sessionPath = path.join(root, 'session.jsonl');
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  const assistantLine = JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 42));
+  const tailBytes = 16 * 1_024;
+  const tail = `${assistantLine}\n${'\n'.repeat(tailBytes - assistantLine.length - 1)}`;
+  const content = `line before tail window\n${tail}`;
+
+  await writeFile(sessionPath, content);
+
+  try {
+    const mutable = dataSource as unknown as {
+      readLatestExistingUpdate: (filePath: string, size: number) => Promise<void>;
+    };
+
+    await mutable.readLatestExistingUpdate(sessionPath, Buffer.byteLength(content));
+
+    assert.equal(dataSource.getLatest().totalTokens, 42);
+    assert.equal(dataSource.getLatest().sessionPath, sessionPath);
+  } finally {
+    dataSource.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('JsonlTailDataSource preserves CRLF boundaries across file chunks', async () => {
   const fixture = await createClaudeFixture('claude-jsonl-tail-crlf-');
   const originalEnv = snapshotProcessEnv();

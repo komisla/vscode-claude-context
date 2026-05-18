@@ -12,7 +12,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const source = createDataSource();
   activeDataSource = source;
   const historicalUsage = new HistoricalUsageReader();
-  void historicalUsage.refresh();
+  historicalUsage.refresh().catch((err: unknown) => {
+    globalThis.console.warn('[vscode-claude-context] historical usage initial refresh failed:', err);
+  });
   const rateLimit = new RateLimitReader();
   const statusBar = new StatusBarController(source, rateLimit);
   activeStatusBar = statusBar;
