@@ -157,7 +157,8 @@ export class StatusBarController implements vscode.Disposable {
     rateLimit: RateLimitSnapshot | undefined
   ): vscode.MarkdownString {
     const totalTokens = this.latest?.totalTokens ?? 0;
-    const effectiveWindow = this.latest?.effectiveWindow ?? this.latest?.contextWindow ?? 0;
+    const contextWindow = this.latest?.contextWindow;
+    const effectiveWindow = this.latest?.effectiveWindow ?? contextWindow ?? 0;
     const tooltip = new vscode.MarkdownString(undefined, true);
     tooltip.isTrusted = false;
     tooltip.appendText(
@@ -165,6 +166,7 @@ export class StatusBarController implements vscode.Disposable {
         fillPercent,
         totalTokens,
         effectiveWindow,
+        contextWindow,
         rateLimit:
           rateLimit === undefined
             ? undefined

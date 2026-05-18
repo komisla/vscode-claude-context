@@ -9,6 +9,7 @@ export interface BuildTooltipTextOptions {
   readonly fillPercent: number;
   readonly totalTokens: number;
   readonly effectiveWindow: number;
+  readonly contextWindow?: number;
   readonly rateLimit?: StatusBarTooltipRateLimit;
 }
 
@@ -36,10 +37,15 @@ export function formatCompactTokens(tokens: number): string {
 }
 
 export function buildTooltipText(options: BuildTooltipTextOptions): string {
+  const rawSuffix =
+    options.contextWindow !== undefined && options.contextWindow > 0
+      ? `  ·  ${Math.round((options.totalTokens / options.contextWindow) * 100)}% of ${formatCompactTokens(options.contextWindow)} total`
+      : '';
+
   const lines = [
     `Context: ${options.fillPercent}% (${formatCompactTokens(options.totalTokens)} / ${formatCompactTokens(
       options.effectiveWindow
-    )} tokens)`
+    )} usable tokens${rawSuffix})`
   ];
 
   if (options.rateLimit !== undefined) {

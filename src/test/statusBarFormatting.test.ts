@@ -19,11 +19,11 @@ test('buildTooltipText includes context, rate limit and call to action', () => {
     }
   });
 
-  assert.match(text, /Context: 72% \(100m \/ 200k tokens\)/);
+  assert.match(text, /Context: 72% \(100m \/ 200k usable tokens\)/);
   assert.match(text, /Last 5h: 12% of plan limit/);
   assert.match(text, /Last 7d: 35% of plan limit/);
   assert.match(text, /Context high - run `\/compact` or start a new chat/);
   assert.match(text, /Token counts use GPT-tokenizer approximation\./);
   assert.match(text, /Click for breakdown and details/);
-  assert.match(text, /Context: 72% \(100m \/ 200k tokens\)\n\nLast 5h: 12% of plan limit/);
+  assert.match(text, /Context: 72% \(100m \/ 200k usable tokens\)\n\nLast 5h: 12% of plan limit/);
 });

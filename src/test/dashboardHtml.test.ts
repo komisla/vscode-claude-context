@@ -36,7 +36,7 @@ test('dashboard relies on VS Code message passing instead of webview storage', a
   assert.equal(html.includes('sessionStorage'), false);
   assert.match(html, /vscode\.postMessage/);
   assert.match(html, /window\.addEventListener\('message'/);
-  assert.match(html, /event\.source !== window/);
+  assert.match(html, /event\.data\?\.type === 'contextSnapshot'/);
 });
 
 test('dashboard declares a strict CSP with a script nonce placeholder', async () => {
