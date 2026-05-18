@@ -7,7 +7,7 @@ import { HistoricalUsageReader, parseHistoricalUsageLine } from '../dataSource/h
 
 const NOW = Date.parse('2026-05-16T12:00:00Z');
 
-test('historical parser sums assistant usage with timestamp', () => {
+test('historical parser sums assistant budget usage with timestamp', () => {
   const line = {
     timestamp: '2026-05-16T11:00:00Z',
     type: 'message',
@@ -24,9 +24,29 @@ test('historical parser sums assistant usage with timestamp', () => {
 
   assert.deepEqual(parseHistoricalUsageLine(JSON.stringify(line)), {
     timestampMs: Date.parse(line.timestamp),
-    tokens: 100,
+    tokens: 80,
     model: 'unknown/absent'
   });
+});
+
+test('historical parser excludes cache read tokens from budget usage', () => {
+  const line = {
+    timestamp: '2026-05-16T11:00:00Z',
+    type: 'message',
+    message: {
+      role: 'assistant',
+      usage: {
+        input_tokens: 10,
+        cache_read_input_tokens: 1_000_000,
+        cache_creation_input_tokens: 30,
+        output_tokens: 40
+      }
+    }
+  };
+
+  const entry = parseHistoricalUsageLine(JSON.stringify(line));
+
+  assert.equal(entry?.tokens, 80);
 });
 
 test('historical parser ignores sidechain and invalid timestamps', () => {
