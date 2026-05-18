@@ -11,6 +11,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const source = createDataSource();
   activeDataSource = source;
   const historicalUsage = new HistoricalUsageReader();
+  void historicalUsage.refresh();
   const rateLimit = new RateLimitReader();
   const statusBar = new StatusBarController(source, rateLimit);
   const panel = new BreakdownPanel(context.extensionUri, historicalUsage, rateLimit);
