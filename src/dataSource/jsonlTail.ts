@@ -311,6 +311,8 @@ export class JsonlTailDataSource implements ContextDataSource {
       this.refreshing,
       this.pollInFlight,
       this.pendingDispose,
+      this.claudeRootWatcherSetup,
+      this.ideWatcherSetup,
       ...this.readNewBytesInFlight.values()
     ].filter(
       (work): work is Promise<void> => work !== undefined
@@ -537,9 +539,24 @@ export class JsonlTailDataSource implements ContextDataSource {
       return;
     }
 
+    this.pruneInactiveSessionState(activeSession.jsonlPath);
     this.watchProjectDir(activeSession.projectDir);
     this.startActiveSessionPolling(activeSession.jsonlPath);
     await this.readNewBytes(activeSession.jsonlPath);
+  }
+
+  private pruneInactiveSessionState(activeJsonlPath: string): void {
+    for (const filePath of this.offsets.keys()) {
+      if (filePath !== activeJsonlPath) {
+        this.offsets.delete(filePath);
+      }
+    }
+
+    for (const filePath of this.remainders.keys()) {
+      if (filePath !== activeJsonlPath) {
+        this.remainders.delete(filePath);
+      }
+    }
   }
 
   private async findActiveSession(): Promise<ActiveSession | undefined> {
