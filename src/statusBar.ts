@@ -56,7 +56,7 @@ export class StatusBarController implements vscode.Disposable {
 
     const config = vscode.workspace.getConfiguration('claudeContext');
     const hideBelow = config.get<number>('hideBelow', 0);
-    const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', true);
+    const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', false);
 
     if (this.latest?.fillPercent === undefined) {
       this.stopRateLimitTimer();
@@ -100,7 +100,7 @@ export class StatusBarController implements vscode.Disposable {
       return;
     }
 
-    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false)) {
       this.stopRateLimitTimer();
       this.latestRateLimit = undefined;
       return;
@@ -126,7 +126,7 @@ export class StatusBarController implements vscode.Disposable {
       return;
     }
 
-    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false)) {
       this.latestRateLimit = undefined;
       this.stopRateLimitTimer();
       return;

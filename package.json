@@ -31,8 +31,8 @@
         },
         "claudeContext.showHistoricalUsage": {
           "type": "boolean",
-          "default": true,
-          "description": "Show 5h and 7d Claude plan utilization in status bar"
+          "default": false,
+          "description": "Show 5h and 7d Claude plan utilization in the status bar. When enabled, the extension sends one POST request to api.anthropic.com every 5 minutes using your stored Claude OAuth token to read rate-limit headers. This counts against your API usage. Disabled by default."
         }
       }
     }
