@@ -3,7 +3,7 @@ import { createReadStream, promises as fsp } from 'fs';
 import { createInterface } from 'readline';
 import * as os from 'os';
 import * as path from 'path';
-import { isAssistantTurn, normalizeModel } from './jsonlTail';
+import { isAssistantTurn, normalizeModel, numberValue } from './jsonlTail';
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -424,8 +424,4 @@ function getModelUsage(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
-}
-
-function numberValue(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }

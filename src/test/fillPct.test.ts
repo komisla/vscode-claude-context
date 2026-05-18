@@ -33,15 +33,15 @@ test('fill percent falls back for unknown models', () => {
 test('unknown opus models fall back to opus family limits', () => {
   const limits = getModelLimits('claude-opus-9-9');
 
-  assert.equal(limits.contextWindow, 1_000_000);
-  assert.equal(limits.maxOutputTokens, 128_000);
+  assert.equal(limits.contextWindow, 200_000);
+  assert.equal(limits.maxOutputTokens, 32_000);
 });
 
 test('unknown sonnet models fall back to sonnet family limits', () => {
   const limits = getModelLimits('claude-sonnet-5');
 
-  assert.equal(limits.contextWindow, 1_000_000);
-  assert.equal(limits.maxOutputTokens, 64_000);
+  assert.equal(limits.contextWindow, 200_000);
+  assert.equal(limits.maxOutputTokens, 8_192);
 });
 
 test('unknown haiku models fall back to haiku family limits', () => {
@@ -97,7 +97,7 @@ test('unknown models emit a drift warning once with chosen contextWindow', () =>
   }
 });
 
-test('unknown sonnet drift warning reports the 1M fallback window', () => {
+test('unknown sonnet drift warning reports the 200K fallback window', () => {
   const originalWarn = console.warn;
   const warnings: string[] = [];
 
@@ -110,7 +110,7 @@ test('unknown sonnet drift warning reports the 1M fallback window', () => {
 
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Unknown Claude model "claude-sonnet-5-drift"/);
-    assert.match(warnings[0], /contextWindow=1000000/);
+    assert.match(warnings[0], /contextWindow=200000/);
   } finally {
     console.warn = originalWarn;
   }

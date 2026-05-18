@@ -135,11 +135,11 @@ function resolveFamilyFallback(normalizedModel: string | undefined): ModelLimits
   }
 
   if (normalizedModel.startsWith('claude-opus-')) {
-    return { contextWindow: 1_000_000, maxOutputTokens: 128_000 };
+    return { contextWindow: 200_000, maxOutputTokens: 32_000 };
   }
 
   if (normalizedModel.startsWith('claude-sonnet-')) {
-    return { contextWindow: 1_000_000, maxOutputTokens: 64_000 };
+    return { contextWindow: 200_000, maxOutputTokens: 8_192 };
   }
 
   if (normalizedModel.startsWith('claude-haiku-')) {
@@ -947,7 +947,7 @@ function normalizeModelKey(model: string | undefined): string | undefined {
   return withoutSuffix.replace(/-(\d{8})$/, '');
 }
 
-function numberValue(value: unknown): number {
+export function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
