@@ -106,6 +106,87 @@ test('RateLimitReader hides usage when utilization headers are absent', async ()
   assert.equal(snapshot, undefined);
 });
 
+test('RateLimitReader warns once when the API response is unauthorized', async () => {
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  try {
+    const reader = new RateLimitReader({
+      readFile: async () => JSON.stringify({ claudeAiOauth: { accessToken: 'oauth-token' } }),
+      fetch: async () => ({ status: 401, headers: new TestHeaders({}) })
+    });
+
+    await reader.refresh(NOW);
+    await reader.refresh(NOW + 5 * 60_000);
+
+    assert.deepEqual(warnings, [
+      [
+        'claude-context: rate-limit probe returned 401 — OAuth token may have expired. Try signing in to Claude Code again.'
+      ]
+    ]);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('RateLimitReader warns for forbidden API responses', async () => {
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  try {
+    const reader = new RateLimitReader({
+      readFile: async () => JSON.stringify({ claudeAiOauth: { accessToken: 'oauth-token' } }),
+      fetch: async () => ({ status: 403, headers: new TestHeaders({}) })
+    });
+
+    await reader.refresh(NOW);
+
+    assert.deepEqual(warnings, [
+      [
+        'claude-context: rate-limit probe returned 403 — OAuth token may have expired. Try signing in to Claude Code again.'
+      ]
+    ]);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('RateLimitReader stays silent for transient rate-limit probe failures', async () => {
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  try {
+    let shouldThrow = true;
+    const reader = new RateLimitReader({
+      readFile: async () => JSON.stringify({ claudeAiOauth: { accessToken: 'oauth-token' } }),
+      fetch: async () => {
+        if (shouldThrow) {
+          shouldThrow = false;
+          throw new Error('network unavailable');
+        }
+
+        return { status: 500, headers: new TestHeaders({}) };
+      }
+    });
+
+    await reader.refresh(NOW);
+    await reader.refresh(NOW + 5 * 60_000);
+
+    assert.deepEqual(warnings, []);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test('RateLimitReader caches unavailable results for five minutes', async () => {
   let fetchCalls = 0;
   const reader = new RateLimitReader({

@@ -29,6 +29,7 @@ export interface RateLimitFetchInit {
 }
 
 export interface RateLimitFetchResponse {
+  readonly status?: number;
   readonly headers: {
     get(name: string): string | null;
   };
@@ -60,6 +61,7 @@ export class RateLimitReader {
   private cached: RateLimitSnapshot | undefined;
   private cachedAtMs = 0;
   private inFlight: Promise<RateLimitSnapshot | undefined> | undefined;
+  private didWarnAuthFailure = false;
 
   public constructor(options: RateLimitReaderOptions = {}) {
     this.credentialsPath =
@@ -113,6 +115,8 @@ export class RateLimitReader {
           signal: controller.signal
         });
 
+        this.warnAuthFailureOnce(response.status);
+
         return this.cache(readRateLimitSnapshot(response.headers), nowMs);
       } finally {
         clearTimeout(timeout);
@@ -126,6 +130,17 @@ export class RateLimitReader {
     this.cached = snapshot;
     this.cachedAtMs = nowMs;
     return snapshot;
+  }
+
+  private warnAuthFailureOnce(status: number | undefined): void {
+    if ((status !== 401 && status !== 403) || this.didWarnAuthFailure) {
+      return;
+    }
+
+    this.didWarnAuthFailure = true;
+    globalThis.console.warn(
+      `claude-context: rate-limit probe returned ${status} — OAuth token may have expired. Try signing in to Claude Code again.`
+    );
   }
 
   private async readAccessToken(): Promise<string | undefined> {
