@@ -190,7 +190,9 @@ export class BreakdownPanel implements vscode.Disposable {
     }
 
     if (this.historyRefreshAt !== 0 && now - this.historyRefreshAt < HISTORY_REFRESH_THROTTLE_MS) {
-      return this.historySnapshot;
+      const snapshot = this.historicalUsage.calculateSnapshot(now);
+      this.historySnapshot = snapshot;
+      return snapshot;
     }
 
     this.historyRefreshing = this.historicalUsage
