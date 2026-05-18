@@ -382,6 +382,10 @@ export function parseHistoricalUsageLine(lineText: string): TokenEntry | undefin
     return undefined;
   }
 
+  if (!/^\d{4}-\d{2}-\d{2}/.test(line.timestamp)) {
+    return undefined;
+  }
+
   const timestampMs = Date.parse(line.timestamp);
 
   if (!Number.isFinite(timestampMs)) {

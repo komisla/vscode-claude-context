@@ -4,9 +4,8 @@
   "description": "Live Claude Code context window monitor with traffic-light status bar and token breakdown panel",
   "version": "0.1.0",
   "publisher": "komisla",
-  "private": true,
   "engines": {
-    "vscode": "^1.73.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "Other"
@@ -40,6 +39,8 @@
   },
   "scripts": {
     "compile": "webpack --mode production",
+    "package": "vsce package",
+    "publish": "vsce publish",
     "watch": "webpack --mode development --watch",
     "lint": "eslint .",
     "test": "npm run compile && tsc --outDir out/test-dist && node src/test/run-tests.cjs"
@@ -53,6 +54,7 @@
     "@typescript-eslint/eslint-plugin": "^8.46.0",
     "@typescript-eslint/parser": "^8.46.0",
     "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.9.1",
     "eslint": "^9.37.0",
     "ts-loader": "^9.5.1",
     "typescript": "^5.4.5",
