@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import type { ContextDataSource } from '../dataSource';
 import { reconstructContextBreakdown, type ContextBreakdown } from '../contextReconstructor';
 import { HistoricalUsageReader, type HistoricalUsageSnapshot } from '../dataSource/historicalUsage';
-import { RATE_LIMIT_REFRESH_MS, RateLimitReader, type RateLimitSnapshot } from '../dataSource/rateLimit';
+import { RateLimitReader, type RateLimitSnapshot } from '../dataSource/rateLimit';
 import dashboardHtml from './dashboard.html';
 
 const HISTORY_REFRESH_THROTTLE_MS = 30_000;
@@ -71,9 +71,6 @@ export class BreakdownPanel implements vscode.Disposable {
   private historySnapshot: HistoricalUsageSnapshot | undefined;
   private historyRefreshAt = 0;
   private historyRefreshing: Promise<HistoricalUsageSnapshot | undefined> | undefined;
-  private rateLimitSnapshot: RateLimitSnapshot | undefined;
-  private rateLimitRefreshAt = 0;
-  private rateLimitRefreshing: Promise<RateLimitSnapshot | undefined> | undefined;
   private postSequence = 0;
 
   public constructor(
@@ -201,36 +198,12 @@ export class BreakdownPanel implements vscode.Disposable {
     return this.historyRefreshing;
   }
 
-  private async readRateLimit(): Promise<RateLimitSnapshot | undefined> {
+  private readRateLimit(): Promise<RateLimitSnapshot | undefined> {
     if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
-      return undefined;
+      return Promise.resolve(undefined);
     }
 
-    const now = Date.now();
-
-    if (this.rateLimitRefreshing !== undefined) {
-      return this.rateLimitRefreshing;
-    }
-
-    if (this.rateLimitRefreshAt !== 0 && now - this.rateLimitRefreshAt < RATE_LIMIT_REFRESH_MS) {
-      return this.rateLimitSnapshot;
-    }
-
-    this.rateLimitRefreshing = this.rateLimit
-      .refresh(now)
-      .then((snapshot) => {
-        this.rateLimitSnapshot = snapshot;
-        this.rateLimitRefreshAt = Date.now();
-        return snapshot;
-      })
-      .catch(() => {
-        return this.rateLimitSnapshot;
-      })
-      .finally(() => {
-        this.rateLimitRefreshing = undefined;
-      });
-
-    return this.rateLimitRefreshing;
+    return this.rateLimit.refresh();
   }
 
   private async handleMessage(panel: vscode.WebviewPanel, message: WebviewCommand): Promise<void> {

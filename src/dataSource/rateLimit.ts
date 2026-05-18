@@ -94,6 +94,7 @@ export class RateLimitReader {
           'content-type': 'application/json'
         },
         body: JSON.stringify({
+          // Cheapest available model for the one-token probe; update if Anthropic retires it.
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 1,
           messages: [{ role: 'user', content: '.' }]

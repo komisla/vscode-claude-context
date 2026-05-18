@@ -85,7 +85,9 @@ test('RateLimitReader caches unavailable results for five minutes', async () => 
   });
 
   await reader.refresh(NOW);
-  await reader.refresh(NOW + 60_000);
+  await reader.refresh(NOW + 4 * 60_000 + 59_000);
+  assert.equal(fetchCalls, 1);
+
   await reader.refresh(NOW + 5 * 60_000);
 
   assert.equal(fetchCalls, 2);
