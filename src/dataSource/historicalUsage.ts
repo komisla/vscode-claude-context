@@ -168,13 +168,14 @@ export class HistoricalUsageReader {
     }
 
     const entries = [...cached.entries, ...appended.entries].filter((entry) => entry.timestampMs >= minTimestamp);
+    const nextOffset = previousOffset + appended.bytesRead;
 
     this.cache.set(jsonlPath, {
       mtimeMs: stats.mtimeMs,
-      size: stats.size,
+      size: nextOffset,
       entries
     });
-    this.fileOffsets.set(jsonlPath, previousOffset + appended.bytesRead);
+    this.fileOffsets.set(jsonlPath, nextOffset);
     if (appended.remainder === '') {
       this.fileRemainders.delete(jsonlPath);
     } else {
@@ -190,6 +191,8 @@ export class HistoricalUsageReader {
     for (const cachedPath of this.cache.keys()) {
       if (!existingPaths.has(cachedPath)) {
         this.cache.delete(cachedPath);
+        this.fileOffsets.delete(cachedPath);
+        this.fileRemainders.delete(cachedPath);
       }
     }
 
