@@ -25,6 +25,7 @@ export interface ContextBreakdownCategories {
 export interface ContextBreakdown {
   readonly totalTokens: number;
   readonly effectiveWindow: number;
+  readonly contextWindow?: number;
   readonly fillPercent: number;
   readonly categories: ContextBreakdownCategories;
   readonly systemPromptDriftWarning: boolean;
@@ -173,6 +174,7 @@ function createBreakdown(
   return {
     totalTokens: source.totalTokens ?? 0,
     effectiveWindow: source.effectiveWindow ?? source.contextWindow ?? 0,
+    contextWindow: source.contextWindow,
     fillPercent: source.fillPercent ?? 0,
     categories,
     systemPromptDriftWarning,
@@ -317,6 +319,7 @@ async function getCacheKey(
     source.sessionPath,
     source.totalTokens,
     source.effectiveWindow,
+    source.contextWindow,
     source.fillPercent,
     workspaceRoot,
     homeDir,

@@ -417,9 +417,15 @@
         renderCategories(breakdown);
         renderDriftWarning(breakdown);
 
+        const rawPct =
+          breakdown.contextWindow && breakdown.contextWindow > 0
+            ? ` · ${Math.round((breakdown.totalTokens / breakdown.contextWindow) * 100)}% of ${formatTokens(
+                breakdown.contextWindow
+              )} total`
+            : '';
         totalLine.textContent = `Total: ${formatTokens(breakdown.totalTokens)} / ${formatTokens(
           breakdown.effectiveWindow
-        )} effective tokens`;
+        )} usable tokens (${Math.round(fillPercent)}%)${rawPct}`;
         actions.classList.toggle('hidden', fillPercent < 60);
       }
 

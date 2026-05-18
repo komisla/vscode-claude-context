@@ -319,6 +319,7 @@ test('reconstructor does not warn on small new sessions', async () => {
     {
       totalTokens: 1,
       effectiveWindow: 178_808,
+      contextWindow: 200_000,
       fillPercent: 1,
       sessionPath: path.join('missing', 'session.jsonl')
     },
@@ -334,6 +335,31 @@ test('reconstructor does not warn on small new sessions', async () => {
   assert.equal(breakdown.systemPromptDriftWarning, false);
   assert.equal(breakdown.isEstimate, true);
   assert.equal(breakdown.fillPercent, 1);
+  assert.equal(breakdown.contextWindow, 200_000);
+});
+
+test('reconstructor keeps raw context window in cache identity', async () => {
+  clearAllContextCaches();
+
+  const source = {
+    totalTokens: 1_000,
+    contextWindow: 100_000,
+    fillPercent: 1,
+    sessionPath: path.join('missing', 'session.jsonl')
+  };
+  const options = {
+    workspaceRoot: path.join('missing', 'workspace'),
+    homeDir: path.join('missing', 'home'),
+    now: () => Date.parse('2026-05-16T12:00:00Z')
+  };
+
+  const first = await reconstructContextBreakdown(source, options);
+  const second = await reconstructContextBreakdown({ ...source, contextWindow: 200_000 }, options);
+
+  assert.equal(first.contextWindow, 100_000);
+  assert.equal(first.effectiveWindow, 100_000);
+  assert.equal(second.contextWindow, 200_000);
+  assert.equal(second.effectiveWindow, 200_000);
 });
 
 test('reconstructor warns on large zero-conversation sessions', async () => {
