@@ -775,7 +775,6 @@ export class JsonlTailDataSource implements ContextDataSource {
       await current;
     } finally {
       this.lastReadAt = Date.now();
-
       if (this.readNewBytesInFlight.get(filePath) === current) {
         this.readNewBytesInFlight.delete(filePath);
       }
