@@ -11,6 +11,7 @@ export class StatusBarController implements vscode.Disposable {
   private disposed = false;
   private rateLimitRefreshTimer: ReturnType<typeof setInterval> | undefined;
   private rateLimitRefreshing: Promise<void> | undefined;
+  private pendingDispose: Promise<void> | undefined;
   private latest: ContextUpdate | undefined;
   private latestRateLimit: RateLimitSnapshot | undefined;
 
@@ -44,8 +45,22 @@ export class StatusBarController implements vscode.Disposable {
     this.disposed = true;
     this.stopRateLimitTimer();
 
+    if (this.rateLimitRefreshing !== undefined) {
+      this.pendingDispose = this.rateLimitRefreshing.catch(() => undefined);
+    }
+
     for (const subscription of this.subscriptions) {
       subscription.dispose();
+    }
+  }
+
+  public async whenIdle(): Promise<void> {
+    const pending = [this.rateLimitRefreshing, this.pendingDispose].filter(
+      (work): work is Promise<void> => work !== undefined
+    );
+
+    if (pending.length > 0) {
+      await Promise.all(pending).catch(() => undefined);
     }
   }
 
