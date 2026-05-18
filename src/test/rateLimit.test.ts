@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RateLimitReader, type RateLimitFetch, type RateLimitFetchInit } from '../dataSource/rateLimit';
+import {
+  RATE_LIMIT_ERROR_RETRY_MS,
+  RateLimitReader,
+  type RateLimitFetch,
+  type RateLimitFetchInit
+} from '../dataSource/rateLimit';
 
 const NOW = Date.parse('2026-05-18T10:00:00Z');
 
@@ -72,8 +77,46 @@ test('RateLimitReader reads utilization and reset headers from the API response'
   assert.equal(requestedUrl, 'https://api.anthropic.com/v1/messages');
   assert.equal(requestedInit?.headers.Authorization, 'Bearer oauth-token');
   assert.equal(requestedInit?.headers['anthropic-beta'], 'oauth-2025-04-20');
+  const requestedBody = JSON.parse(requestedInit?.body ?? '{}') as { readonly model?: string };
+  assert.equal(requestedBody.model, 'claude-haiku-4-5-20251001');
   assert.notEqual(requestedInit?.signal, undefined);
   assert.equal(requestedInit?.signal?.aborted, false);
+});
+
+test('RateLimitReader retries with fallback probe model after 404', async () => {
+  const requestedModels: string[] = [];
+  const reader = new RateLimitReader({
+    readFile: async () => JSON.stringify({ claudeAiOauth: { accessToken: 'oauth-token' } }),
+    fetch: async (_url, init) => {
+      const body = JSON.parse(init.body) as { readonly model?: string };
+
+      if (body.model !== undefined) {
+        requestedModels.push(body.model);
+      }
+
+      if (requestedModels.length === 1) {
+        return { status: 404, headers: new TestHeaders({}) };
+      }
+
+      return {
+        status: 200,
+        headers: new TestHeaders({
+          'anthropic-ratelimit-unified-5h-utilization': '0.1',
+          'anthropic-ratelimit-unified-7d-utilization': '0.2'
+        })
+      };
+    }
+  });
+
+  const snapshot = await reader.refresh(NOW);
+
+  assert.deepEqual(requestedModels, ['claude-haiku-4-5-20251001', 'claude-haiku-4-5']);
+  assert.deepEqual(snapshot, {
+    pct5h: 10,
+    pct7d: 20,
+    reset5h: undefined,
+    reset7d: undefined
+  });
 });
 
 test('RateLimitReader aborts the API request when the fetch timeout elapses', async () => {
@@ -185,6 +228,40 @@ test('RateLimitReader stays silent for transient rate-limit probe failures', asy
   } finally {
     console.warn = originalWarn;
   }
+});
+
+test('RateLimitReader retries transient probe failures after the short error TTL', async () => {
+  let fetchCalls = 0;
+  const reader = new RateLimitReader({
+    readFile: async () => JSON.stringify({ claudeAiOauth: { accessToken: 'oauth-token' } }),
+    fetch: async () => {
+      fetchCalls += 1;
+
+      if (fetchCalls === 1) {
+        throw new Error('network unavailable');
+      }
+
+      return {
+        headers: new TestHeaders({
+          'anthropic-ratelimit-unified-5h-utilization': '0.2',
+          'anthropic-ratelimit-unified-7d-utilization': '0.3'
+        })
+      };
+    }
+  });
+
+  assert.equal(await reader.refresh(NOW), undefined);
+
+  assert.equal(await reader.refresh(NOW + RATE_LIMIT_ERROR_RETRY_MS - 1), undefined);
+  assert.equal(fetchCalls, 1);
+
+  assert.deepEqual(await reader.refresh(NOW + RATE_LIMIT_ERROR_RETRY_MS), {
+    pct5h: 20,
+    pct7d: 30,
+    reset5h: undefined,
+    reset7d: undefined
+  });
+  assert.equal(fetchCalls, 2);
 });
 
 test('RateLimitReader caches unavailable results for five minutes', async () => {
