@@ -591,6 +591,59 @@ test('reconstructor reuses the cache for equivalent sources with different prope
   }
 });
 
+test('reconstructor separates cache key fields with null bytes', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-cache-separator-'));
+  clearAllContextCaches();
+
+  const mutableMapPrototype = Map.prototype as unknown as {
+    set: (
+      this: Map<unknown, unknown>,
+      key: unknown,
+      value: unknown
+    ) => Map<unknown, unknown>;
+  };
+  const originalSet = mutableMapPrototype.set;
+  const cacheKeys: string[] = [];
+
+  mutableMapPrototype.set = function (
+    this: Map<unknown, unknown>,
+    key: unknown,
+    value: unknown
+  ): Map<unknown, unknown> {
+    if (typeof key === 'string' && isContextCacheEntryValue(value)) {
+      cacheKeys.push(key);
+    }
+
+    return originalSet.call(this, key, value);
+  };
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const workspaceRoot = path.join(root, 'repo|with-pipe');
+
+    await reconstructContextBreakdown(
+      {
+        totalTokens: 5_000,
+        effectiveWindow: 178_808,
+        fillPercent: 3
+      },
+      {
+        workspaceRoot,
+        homeDir,
+        now: () => 1_000
+      }
+    );
+
+    assert.equal(cacheKeys.length, 1);
+    assert.match(cacheKeys[0], /\0/);
+    assert.match(cacheKeys[0], /repo\|with-pipe/);
+  } finally {
+    mutableMapPrototype.set = originalSet;
+    clearAllContextCaches();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('reconstructor reuses cached CLAUDE.md snapshots when only the source changes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-snapshot-cache-'));
   clearAllContextCaches();
@@ -1008,6 +1061,28 @@ function isCachedTextFileValue(value: unknown): value is {
     typeof candidate.fingerprint === 'string' &&
     typeof candidate.content === 'string' &&
     typeof candidate.tokenCount === 'number'
+  );
+}
+
+function isContextCacheEntryValue(value: unknown): value is {
+  readonly key: string;
+  readonly expiresAt: number;
+  readonly value: { readonly isEstimate: true };
+} {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as {
+    readonly key?: unknown;
+    readonly expiresAt?: unknown;
+    readonly value?: { readonly isEstimate?: unknown };
+  };
+
+  return (
+    typeof candidate.key === 'string' &&
+    typeof candidate.expiresAt === 'number' &&
+    candidate.value?.isEstimate === true
   );
 }
 

@@ -14,6 +14,7 @@ const MIN_TOKENS_FOR_DRIFT_WARNING = 20_000;
 const CONTEXT_BREAKDOWN_PRUNE_INTERVAL_MS = 60_000;
 const CLAUDE_MD_MISSING_FINGERPRINT_TTL_MS = 5_000;
 const MAX_IMPORTED_CLAUDE_MD_DEPTH = 10;
+const CACHE_KEY_SEPARATOR = '\0';
 
 export interface ContextBreakdownCategories {
   readonly systemPrompt: number;
@@ -329,7 +330,7 @@ async function getCacheKey(
     ...(await getMemoryFingerprint(source.sessionPath))
   ];
 
-  return parts.join('|');
+  return parts.join(CACHE_KEY_SEPARATOR);
 }
 
 async function getSessionPathFingerprint(sessionPath: string | undefined): Promise<readonly string[]> {
