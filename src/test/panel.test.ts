@@ -61,11 +61,22 @@ function makeHistorySnapshot(): HistoricalUsageSnapshot {
   };
 }
 
-function makeRateLimitSnapshot(): RateLimitSnapshot {
+function makeRateLimitSnapshot(pct5h = 20, pct7d = 30): RateLimitSnapshot {
   return {
-    pct5h: 20,
-    pct7d: 30
+    pct5h,
+    pct7d
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+
+  return { promise, resolve, reject };
 }
 
 async function flush(): Promise<void> {
@@ -129,7 +140,7 @@ test('BreakdownPanel throttles historical usage refreshes', async () => {
     tracker.fire({
       fillPercent: 65
     });
-    await flush();
+    await waitFor(() => refreshCalls === 2);
 
     assert.equal(refreshCalls, 2);
   } finally {
@@ -170,16 +181,129 @@ test('BreakdownPanel retries historical usage refreshes after failures', async (
 
   try {
     panel.open(tracker.source);
-    await flush();
+    await waitFor(() => refreshCalls === 1);
 
     assert.equal(refreshCalls, 1);
 
     tracker.fire({
       fillPercent: 35
     });
-    await flush();
+    await waitFor(() => refreshCalls === 2);
 
     assert.equal(refreshCalls, 2);
+  } finally {
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
+test('BreakdownPanel posts context before usage snapshots settle', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: true
+  });
+
+  const pendingHistory = deferred<HistoricalUsageSnapshot | undefined>();
+  const pendingRateLimit = deferred<RateLimitSnapshot | undefined>();
+  const historicalUsage = {
+    refresh: async () => pendingHistory.promise
+  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => pendingRateLimit.promise
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
+  panel.open(tracker.source);
+
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  try {
+    await waitFor(() => mockPanel.postedMessages.length === 1);
+
+    const firstMessage = mockPanel.postedMessages[0] as {
+      readonly type: string;
+      readonly payload: { readonly breakdown?: unknown; readonly rateLimit?: unknown; readonly history?: unknown };
+    };
+    assert.equal(firstMessage.type, 'contextSnapshot');
+    assert.notEqual(firstMessage.payload.breakdown, undefined);
+    assert.equal(firstMessage.payload.rateLimit, undefined);
+    assert.equal(firstMessage.payload.history, undefined);
+
+    pendingRateLimit.resolve(makeRateLimitSnapshot());
+    pendingHistory.resolve(makeHistorySnapshot());
+
+    await waitFor(() => mockPanel.postedMessages.length === 2);
+
+    const secondMessage = mockPanel.postedMessages[1] as {
+      readonly payload: {
+        readonly rateLimit?: { readonly pct5h: number; readonly pct7d: number };
+        readonly history?: { readonly hasData: boolean };
+      };
+    };
+    assert.equal(secondMessage.payload.rateLimit?.pct5h, 20);
+    assert.equal(secondMessage.payload.rateLimit?.pct7d, 30);
+    assert.equal(secondMessage.payload.history?.hasData, true);
+  } finally {
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
+test('BreakdownPanel ignores stale usage snapshots after a newer context post', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: true
+  });
+
+  const firstRateLimit = deferred<RateLimitSnapshot | undefined>();
+  const secondRateLimit = deferred<RateLimitSnapshot | undefined>();
+  let rateLimitCalls = 0;
+  const historicalUsage = {
+    refresh: async () => makeHistorySnapshot()
+  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => {
+      rateLimitCalls += 1;
+      return rateLimitCalls === 1 ? firstRateLimit.promise : secondRateLimit.promise;
+    }
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
+  panel.open(tracker.source);
+
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  try {
+    await waitFor(() => mockPanel.postedMessages.length === 1 && rateLimitCalls === 1);
+
+    tracker.fire({
+      fillPercent: 65
+    });
+
+    await waitFor(() => mockPanel.postedMessages.length === 2 && rateLimitCalls === 2);
+
+    firstRateLimit.resolve(makeRateLimitSnapshot(20, 30));
+    await flush();
+    assert.equal(mockPanel.postedMessages.length, 2);
+
+    secondRateLimit.resolve(makeRateLimitSnapshot(70, 80));
+    await waitFor(() => mockPanel.postedMessages.length === 3);
+
+    const lastMessage = mockPanel.postedMessages[2] as {
+      readonly payload: { readonly rateLimit?: { readonly pct5h: number; readonly pct7d: number } };
+    };
+    assert.equal(lastMessage.payload.rateLimit?.pct5h, 70);
+    assert.equal(lastMessage.payload.rateLimit?.pct7d, 80);
   } finally {
     tracker.source.dispose();
     panel.dispose();
@@ -210,8 +334,8 @@ test('BreakdownPanel tears down subscriptions when the panel closes', async () =
   assert.equal(vscodeMock.window.webviewPanels.length, 1);
   const mockPanel = vscodeMock.window.webviewPanels[0];
 
-  await waitFor(() => mockPanel.postedMessages.length === 1);
-  assert.equal(mockPanel.postedMessages.length, 1);
+  await waitFor(() => mockPanel.postedMessages.length >= 1);
+  const postedBeforeDispose = mockPanel.postedMessages.length;
 
   mockPanel.dispose();
   tracker.fire({
@@ -219,7 +343,7 @@ test('BreakdownPanel tears down subscriptions when the panel closes', async () =
   });
   await flush();
 
-  assert.equal(mockPanel.postedMessages.length, 1);
+  assert.equal(mockPanel.postedMessages.length, postedBeforeDispose);
 
   tracker.source.dispose();
   panel.dispose();
