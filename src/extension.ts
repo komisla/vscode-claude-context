@@ -6,6 +6,7 @@ import { StatusBarController } from './statusBar';
 import { BreakdownPanel } from './webview/panel';
 
 let activeDataSource: ContextDataSource | undefined;
+let activeStatusBar: StatusBarController | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const source = createDataSource();
@@ -14,6 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
   void historicalUsage.refresh();
   const rateLimit = new RateLimitReader();
   const statusBar = new StatusBarController(source, rateLimit);
+  activeStatusBar = statusBar;
   const panel = new BreakdownPanel(context.extensionUri, historicalUsage, rateLimit);
 
   context.subscriptions.push(
@@ -26,6 +28,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export async function deactivate(): Promise<void> {
   const source = activeDataSource;
+  const statusBar = activeStatusBar;
   activeDataSource = undefined;
-  await source?.whenIdle();
+  activeStatusBar = undefined;
+  await Promise.all([source?.whenIdle(), statusBar?.whenIdle()]);
 }

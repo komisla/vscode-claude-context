@@ -229,6 +229,7 @@ export class JsonlTailDataSource implements ContextDataSource {
   private currentProjectDir: string | undefined;
   private readonly offsets = new Map<string, number>();
   private readonly remainders = new Map<string, string>();
+  private readonly readNewBytesInFlight = new Map<string, Promise<void>>();
   private readonly lockCache = new Map<string, CachedLockFile>();
   private ideDirectoryCache: CachedIdeDirectory | undefined;
   private disposed = false;
@@ -280,7 +281,7 @@ export class JsonlTailDataSource implements ContextDataSource {
     // released before callers (e.g. tests) tear down the directory. The VSCode
     // Disposable contract requires dispose() to be synchronous, so the promise
     // is exposed via whenIdle() rather than awaited here.
-    const pendingWork = [this.refreshing, this.pollInFlight].filter(
+    const pendingWork = [this.refreshing, this.pollInFlight, ...this.readNewBytesInFlight.values()].filter(
       (work): work is Promise<void> => work !== undefined
     );
     if (pendingWork.length > 0) {
@@ -297,7 +298,12 @@ export class JsonlTailDataSource implements ContextDataSource {
    * removing temp directories. Safe to call before or after dispose().
    */
   public async whenIdle(): Promise<void> {
-    const pending = [this.refreshing, this.pollInFlight, this.pendingDispose].filter(
+    const pending = [
+      this.refreshing,
+      this.pollInFlight,
+      this.pendingDispose,
+      ...this.readNewBytesInFlight.values()
+    ].filter(
       (work): work is Promise<void> => work !== undefined
     );
 
@@ -724,6 +730,23 @@ export class JsonlTailDataSource implements ContextDataSource {
   }
 
   private async readNewBytes(filePath: string): Promise<void> {
+    const previous = this.readNewBytesInFlight.get(filePath) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(() => this.readNewBytesCore(filePath));
+
+    this.readNewBytesInFlight.set(filePath, current);
+
+    try {
+      await current;
+    } finally {
+      if (this.readNewBytesInFlight.get(filePath) === current) {
+        this.readNewBytesInFlight.delete(filePath);
+      }
+    }
+  }
+
+  private async readNewBytesCore(filePath: string): Promise<void> {
     let stats: fs.Stats;
 
     try {

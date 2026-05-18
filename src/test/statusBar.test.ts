@@ -244,3 +244,54 @@ test('StatusBarController ignores a late rate-limit refresh after dispose', asyn
 
   tracker.source.dispose();
 });
+
+test('StatusBarController whenIdle waits for rate-limit refresh after dispose', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    hideBelow: 0,
+    showHistoricalUsage: true
+  });
+
+  const pending = deferred<RateLimitSnapshot>();
+  let refreshSettled = false;
+  const rateLimit = {
+    refresh: async () =>
+      pending.promise.then((snapshot) => {
+        refreshSettled = true;
+        return snapshot;
+      })
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 70,
+    totalTokens: 70_000,
+    contextWindow: 100_000,
+    effectiveWindow: 100_000
+  });
+
+  const controller = new StatusBarController(tracker.source, rateLimit);
+  tracker.fire({
+    fillPercent: 70,
+    totalTokens: 70_000,
+    contextWindow: 100_000,
+    effectiveWindow: 100_000
+  });
+  await flush();
+
+  controller.dispose();
+  const idle = controller.whenIdle();
+  await flush();
+
+  assert.equal(refreshSettled, false);
+
+  pending.resolve({
+    pct5h: 1,
+    pct7d: 1
+  });
+  await idle;
+
+  assert.equal(refreshSettled, true);
+
+  tracker.source.dispose();
+});

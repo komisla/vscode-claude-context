@@ -927,6 +927,58 @@ test('JsonlTailDataSource only runs one refresh core at a time', async () => {
   }
 });
 
+test('JsonlTailDataSource serializes readNewBytes calls for the same file', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+
+  try {
+    const mutable = dataSource as unknown as {
+      readNewBytes: (filePath: string) => Promise<void>;
+      readNewBytesCore: (filePath: string) => Promise<void>;
+    };
+    const releases: Array<() => void> = [];
+    let activeReads = 0;
+    let readCalls = 0;
+    let maxConcurrentReads = 0;
+
+    mutable.readNewBytesCore = async () => {
+      readCalls += 1;
+      activeReads += 1;
+      maxConcurrentReads = Math.max(maxConcurrentReads, activeReads);
+
+      try {
+        await new Promise<void>((resolve) => {
+          releases.push(resolve);
+        });
+      } finally {
+        activeReads -= 1;
+      }
+    };
+
+    const first = mutable.readNewBytes('session.jsonl');
+    const second = mutable.readNewBytes('session.jsonl');
+
+    await delay(0);
+
+    assert.equal(readCalls, 1);
+    assert.equal(maxConcurrentReads, 1);
+
+    releases[0]?.();
+    await delay(0);
+
+    assert.equal(readCalls, 2);
+    assert.equal(maxConcurrentReads, 1);
+
+    releases[1]?.();
+    await Promise.all([first, second]);
+
+    assert.equal(activeReads, 0);
+  } finally {
+    dataSource.dispose();
+    await dataSource.whenIdle();
+  }
+});
+
 function makeAssistantLine(timestamp: string, inputTokens: number): unknown {
   return {
     timestamp,
