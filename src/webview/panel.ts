@@ -145,11 +145,7 @@ export class BreakdownPanel implements vscode.Disposable {
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const latest = source.getLatest();
-    const [breakdown, rateLimit, history] = await Promise.all([
-      reconstructContextBreakdown(latest, { workspaceRoot }),
-      this.readRateLimit(),
-      this.readHistoricalUsage()
-    ]);
+    const breakdown = await reconstructContextBreakdown(latest, { workspaceRoot });
 
     if (this.panel !== panel || sequence !== this.postSequence) {
       return;
@@ -159,11 +155,27 @@ export class BreakdownPanel implements vscode.Disposable {
       type: 'contextSnapshot',
       payload: {
         breakdown,
-        rateLimit: rateLimit === undefined ? undefined : toWebviewRateLimit(rateLimit),
-        history: history === undefined ? undefined : toWebviewHistoricalUsage(history),
         error: latest.error
       }
     });
+
+    void Promise.all([this.readRateLimit(), this.readHistoricalUsage()]).then(
+      async ([rateLimit, history]) => {
+        if (this.panel !== panel || sequence !== this.postSequence) {
+          return;
+        }
+
+        await this.postWebviewMessage(panel, {
+          type: 'contextSnapshot',
+          payload: {
+            breakdown,
+            rateLimit: rateLimit === undefined ? undefined : toWebviewRateLimit(rateLimit),
+            history: history === undefined ? undefined : toWebviewHistoricalUsage(history),
+            error: latest.error
+          }
+        });
+      }
+    );
   }
 
   private async readHistoricalUsage(): Promise<HistoricalUsageSnapshot | undefined> {

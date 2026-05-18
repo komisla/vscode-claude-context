@@ -1,10 +1,12 @@
 import { promises as fsp } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { clearTimeout, setTimeout } from 'timers';
 
 export const RATE_LIMIT_REFRESH_MS = 5 * 60 * 1_000;
 
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+const RATE_LIMIT_FETCH_TIMEOUT_MS = 8_000;
 const RATE_LIMIT_5H_HEADER = 'anthropic-ratelimit-unified-5h-utilization';
 const RATE_LIMIT_7D_HEADER = 'anthropic-ratelimit-unified-7d-utilization';
 const RATE_LIMIT_5H_RESET_HEADER = 'anthropic-ratelimit-unified-5h-reset';
@@ -21,6 +23,7 @@ export interface RateLimitFetchInit {
   readonly method: 'POST';
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
+  readonly signal?: InstanceType<typeof globalThis.AbortController>['signal'];
 }
 
 export interface RateLimitFetchResponse {
@@ -43,12 +46,14 @@ interface CredentialsFile {
 interface RateLimitReaderOptions {
   readonly credentialsPath?: string;
   readonly fetch?: RateLimitFetch;
+  readonly fetchTimeoutMs?: number;
   readonly readFile?: (filePath: string, encoding: 'utf-8') => Promise<string>;
 }
 
 export class RateLimitReader {
   private readonly credentialsPath: string;
   private readonly fetcher: RateLimitFetch | undefined;
+  private readonly fetchTimeoutMs: number;
   private readonly readFile: (filePath: string, encoding: 'utf-8') => Promise<string>;
   private cached: RateLimitSnapshot | undefined;
   private cachedAtMs = 0;
@@ -58,6 +63,7 @@ export class RateLimitReader {
     this.credentialsPath =
       options.credentialsPath ?? path.join(os.homedir(), '.claude', '.credentials.json');
     this.fetcher = options.fetch ?? getDefaultFetch();
+    this.fetchTimeoutMs = options.fetchTimeoutMs ?? RATE_LIMIT_FETCH_TIMEOUT_MS;
     this.readFile = options.readFile ?? fsp.readFile;
   }
 
@@ -85,23 +91,31 @@ export class RateLimitReader {
         return this.cache(undefined, nowMs);
       }
 
-      const response = await this.fetcher(ANTHROPIC_MESSAGES_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'oauth-2025-04-20',
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          // Cheapest available model for the one-token probe; update if Anthropic retires it.
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 1,
-          messages: [{ role: 'user', content: '.' }]
-        })
-      });
+      const controller = new globalThis.AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.fetchTimeoutMs);
 
-      return this.cache(readRateLimitSnapshot(response.headers), nowMs);
+      try {
+        const response = await this.fetcher(ANTHROPIC_MESSAGES_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'oauth-2025-04-20',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            // Cheapest available model for the one-token probe; update if Anthropic retires it.
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: '.' }]
+          }),
+          signal: controller.signal
+        });
+
+        return this.cache(readRateLimitSnapshot(response.headers), nowMs);
+      } finally {
+        clearTimeout(timeout);
+      }
     } catch {
       return this.cache(undefined, nowMs);
     }

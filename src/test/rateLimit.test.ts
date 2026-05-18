@@ -12,6 +12,17 @@ class TestHeaders {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+
+  return { promise, resolve, reject };
+}
+
 test('RateLimitReader hides usage when credentials are missing', async () => {
   let fetchCalls = 0;
   const reader = new RateLimitReader({
@@ -61,6 +72,27 @@ test('RateLimitReader reads utilization and reset headers from the API response'
   assert.equal(requestedUrl, 'https://api.anthropic.com/v1/messages');
   assert.equal(requestedInit?.headers.Authorization, 'Bearer oauth-token');
   assert.equal(requestedInit?.headers['anthropic-beta'], 'oauth-2025-04-20');
+  assert.notEqual(requestedInit?.signal, undefined);
+  assert.equal(requestedInit?.signal?.aborted, false);
+});
+
+test('RateLimitReader aborts the API request when the fetch timeout elapses', async () => {
+  const pending = deferred<{ readonly headers: TestHeaders }>();
+  let requestedSignal: AbortSignal | undefined;
+  const reader = new RateLimitReader({
+    fetchTimeoutMs: 1,
+    readFile: async () => JSON.stringify({ claudeAiOauth: { accessToken: 'oauth-token' } }),
+    fetch: async (_url, init) => {
+      requestedSignal = init.signal;
+      init.signal?.addEventListener('abort', () => pending.reject(new Error('aborted')));
+      return pending.promise;
+    }
+  });
+
+  const snapshot = await reader.refresh(NOW);
+
+  assert.equal(snapshot, undefined);
+  assert.equal(requestedSignal?.aborted, true);
 });
 
 test('RateLimitReader hides usage when utilization headers are absent', async () => {
