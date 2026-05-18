@@ -54,14 +54,16 @@ const DEFAULT_MODEL_LIMITS: ModelLimits = {
 
 const warnedUnknownModels = new Set<string>();
 
-// Last verified against Anthropic's models overview on 2026-05-17.
+// Context windows verified empirically via Claude Code Stop hook context_window_percentage
+// field (anthropics/claude-code#11008). Claude 4.x models use 200K despite some API docs
+// listing higher maximums — the effective in-session window is 200K.
 export const MODEL_TABLE: Readonly<Record<string, ModelLimits>> = {
   'claude-opus-4-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
-  'claude-opus-4-6': { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
-  'claude-opus-4-7': { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
-  'claude-sonnet-4-5': { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
-  'claude-sonnet-4-6': { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
-  'claude-sonnet-4-7': { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
+  'claude-opus-4-6': { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  'claude-opus-4-7': { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  'claude-sonnet-4-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
+  'claude-sonnet-4-6': { contextWindow: 200_000, maxOutputTokens: 8_192 },
+  'claude-sonnet-4-7': { contextWindow: 200_000, maxOutputTokens: 8_192 },
   'claude-haiku-4-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
   'claude-opus-4': { contextWindow: 200_000, maxOutputTokens: 32_000 },
   'claude-sonnet-4': { contextWindow: 200_000, maxOutputTokens: 8_192 },
@@ -93,6 +95,21 @@ export function getUsageTotal(usage: unknown): number {
     numberValue(usage.cache_read_input_tokens) +
     numberValue(usage.cache_creation_input_tokens) +
     numberValue(usage.output_tokens)
+  );
+}
+
+// Context fill only counts input-side tokens — output_tokens are produced by the model,
+// not consumed as context input. Matches Claude Code's own context_window_percentage
+// calculation (anthropics/claude-code#11008).
+function getContextFillTokens(usage: unknown): number {
+  if (!isRecord(usage)) {
+    return 0;
+  }
+
+  return (
+    numberValue(usage.input_tokens) +
+    numberValue(usage.cache_read_input_tokens) +
+    numberValue(usage.cache_creation_input_tokens)
   );
 }
 
@@ -170,7 +187,7 @@ export function parseContextUpdateFromLine(
   }
 
   const usage = line.message.usage;
-  const totalTokens = getUsageTotal(usage);
+  const totalTokens = getContextFillTokens(usage);
   const model = normalizeModel(line.message);
   const { fillPercent, contextWindow, effectiveWindow } = calculateFillPercent(totalTokens, model);
 

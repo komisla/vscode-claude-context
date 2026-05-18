@@ -18,7 +18,7 @@ test('assistant turn discriminator uses message role and usage', () => {
   };
 
   assert.equal(isAssistantTurn(line), true);
-  assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'session.jsonl')?.totalTokens, 126);
+  assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'session.jsonl')?.totalTokens, 121);
 });
 
 test('assistant discriminator filters sidechain turns', () => {
@@ -58,7 +58,7 @@ test('parser ignores iteration usage and uses only outer usage', () => {
     }
   };
 
-  assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'session.jsonl')?.totalTokens, 2);
+  assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'session.jsonl')?.totalTokens, 1);
 });
 
 test('parser normalizes missing and invalid models consistently', () => {
