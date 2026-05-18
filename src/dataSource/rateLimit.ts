@@ -11,6 +11,8 @@ const RATE_LIMIT_5H_HEADER = 'anthropic-ratelimit-unified-5h-utilization';
 const RATE_LIMIT_7D_HEADER = 'anthropic-ratelimit-unified-7d-utilization';
 const RATE_LIMIT_5H_RESET_HEADER = 'anthropic-ratelimit-unified-5h-reset';
 const RATE_LIMIT_7D_RESET_HEADER = 'anthropic-ratelimit-unified-7d-reset';
+// Cheapest model for the one-token probe. Update when Anthropic retires this model ID.
+const RATE_LIMIT_PROBE_MODEL = 'claude-haiku-4-5-20251001';
 
 export interface RateLimitSnapshot {
   readonly pct5h: number;
@@ -104,8 +106,7 @@ export class RateLimitReader {
             'content-type': 'application/json'
           },
           body: JSON.stringify({
-            // Cheapest available model for the one-token probe; update if Anthropic retires it.
-            model: 'claude-haiku-4-5-20251001',
+            model: RATE_LIMIT_PROBE_MODEL,
             max_tokens: 1,
             messages: [{ role: 'user', content: '.' }]
           }),

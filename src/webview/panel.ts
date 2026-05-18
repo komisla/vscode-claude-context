@@ -179,7 +179,7 @@ export class BreakdownPanel implements vscode.Disposable {
   }
 
   private async readHistoricalUsage(): Promise<HistoricalUsageSnapshot | undefined> {
-    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false)) {
       return undefined;
     }
 
@@ -211,7 +211,7 @@ export class BreakdownPanel implements vscode.Disposable {
   }
 
   private readRateLimit(): Promise<RateLimitSnapshot | undefined> {
-    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false)) {
       return Promise.resolve(undefined);
     }
 
