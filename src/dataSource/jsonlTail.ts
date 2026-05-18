@@ -13,6 +13,7 @@ const INITIAL_TAIL_READ_BYTES = 16 * 1_024;
 const CLAUDE_INTERNAL_RESERVE_TOKENS = 13_000;
 const WATCHER_ERROR_RETRY_MS = 30_000;
 const CLAUDE_ROOT_WATCHER_ERROR_RETRY_MS = 60_000;
+const STALE_LOCK_TTL_MS = 10 * 60 * 1000;
 const SESSION_NOT_FOUND_ERROR = 'Claude Code session not found';
 
 interface ModelLimits {
@@ -583,19 +584,28 @@ export class JsonlTailDataSource implements ContextDataSource {
       });
     }
 
+    const resolvedLockResults = lockResults.filter(
+      (result): result is ResolvedLockSession => result !== undefined
+    );
+    const staleBeforeMs = Date.now() - STALE_LOCK_TTL_MS;
+    const freshLockResults = resolvedLockResults.filter(
+      (result) => result.lockMtimeMs >= staleBeforeMs || result.jsonlMtimeMs >= staleBeforeMs
+    );
+    const selectableLockResults =
+      freshLockResults.length > 0 ? freshLockResults : resolvedLockResults;
+
     let bestSession: ActiveSession | undefined;
     let bestLockMtimeMs = -1;
     let bestJsonlMtimeMs = -1;
     let bestLockPath = '';
 
-    for (const result of lockResults) {
+    for (const result of selectableLockResults) {
       if (
-        result !== undefined &&
-        (result.lockMtimeMs > bestLockMtimeMs ||
+        result.lockMtimeMs > bestLockMtimeMs ||
           (result.lockMtimeMs === bestLockMtimeMs &&
             (result.jsonlMtimeMs > bestJsonlMtimeMs ||
               (result.jsonlMtimeMs === bestJsonlMtimeMs &&
-                (bestSession === undefined || result.lockPath < bestLockPath)))))
+                (bestSession === undefined || result.lockPath < bestLockPath))))
       ) {
         bestLockMtimeMs = result.lockMtimeMs;
         bestJsonlMtimeMs = result.jsonlMtimeMs;
