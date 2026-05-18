@@ -70,6 +70,16 @@ test('historical parser ignores sidechain and invalid timestamps', () => {
     ),
     undefined
   );
+
+  assert.equal(
+    parseHistoricalUsageLine(
+      JSON.stringify({
+        timestamp: '2026-13-01T11:00:00Z',
+        message: { role: 'assistant', usage: { input_tokens: 10 } }
+      })
+    ),
+    undefined
+  );
 });
 
 test('historical reader scans jsonl recursively and buckets 5h and 7d windows', async () => {

@@ -149,6 +149,10 @@ function resolveFamilyFallback(normalizedModel: string | undefined): ModelLimits
   return DEFAULT_MODEL_LIMITS;
 }
 
+/**
+ * Context window and reserve values are based on the upstream Claude Code Stop hook
+ * measurement in anthropics/claude-code#11008.
+ */
 export function calculateFillPercent(
   totalTokens: number,
   model: string | undefined
