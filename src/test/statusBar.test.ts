@@ -92,10 +92,20 @@ test('StatusBarController applies thresholds and starts and stops the history ti
   const item = vscodeMock.window.statusBarItems[0];
 
   assert.equal(vscodeMock.window.statusBarItems.length, 1);
-  assert.equal(item.visible, false);
-  assert.equal(item.hideCount, 1);
+  assert.equal(item.visible, true);
+  assert.equal(item.text, '$(hubot) ctx idle');
   assert.equal(item.backgroundColor, undefined);
   assert.equal((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
+
+  tracker.fire({
+    fillPercent: 39,
+    totalTokens: 39_000,
+    contextWindow: 100_000,
+    effectiveWindow: 100_000
+  });
+
+  assert.equal(item.visible, false);
+  assert.equal(item.hideCount, 1);
 
   tracker.fire({
     fillPercent: 50,
@@ -134,6 +144,63 @@ test('StatusBarController applies thresholds and starts and stops the history ti
   tracker.source.dispose();
 });
 
+test('StatusBarController shows an idle indicator when no fillPercent is available', () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    hideBelow: 0,
+    showHistoricalUsage: false
+  });
+
+  const historicalUsage = {
+    refresh: async () => makeHistorySnapshot()
+  } as unknown as HistoricalUsageReader;
+
+  const tracker = createSource({ error: 'Claude Code session not found' });
+
+  const controller = new StatusBarController(tracker.source, historicalUsage);
+  const item = vscodeMock.window.statusBarItems[0];
+
+  assert.equal(item.visible, true);
+  assert.equal(item.text, '$(hubot) ctx idle');
+  assert.equal(item.backgroundColor, undefined);
+
+  controller.dispose();
+  tracker.source.dispose();
+});
+
+test('StatusBarController stays visible at low fillPercent when hideBelow is 0', () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    hideBelow: 0,
+    showHistoricalUsage: false
+  });
+
+  const historicalUsage = {
+    refresh: async () => makeHistorySnapshot()
+  } as unknown as HistoricalUsageReader;
+
+  const tracker = createSource({ error: 'Claude Code session not found' });
+
+  const controller = new StatusBarController(tracker.source, historicalUsage);
+  const item = vscodeMock.window.statusBarItems[0];
+
+  tracker.fire({
+    fillPercent: 5,
+    totalTokens: 5_000,
+    contextWindow: 100_000,
+    effectiveWindow: 100_000
+  });
+
+  assert.equal(item.visible, true);
+  assert.equal(item.text, '$(hubot) ctx 5%');
+  assert.equal(item.backgroundColor, undefined);
+
+  controller.dispose();
+  tracker.source.dispose();
+});
+
 test('StatusBarController ignores a late history refresh after dispose', async () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
@@ -165,7 +232,7 @@ test('StatusBarController ignores a late history refresh after dispose', async (
   });
 
   assert.equal(item.visible, true);
-  assert.equal(item.showCount, 1);
+  assert.equal(item.showCount, 2);
   assert.notEqual((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
 
   controller.dispose();
@@ -179,8 +246,8 @@ test('StatusBarController ignores a late history refresh after dispose', async (
   });
   await flush();
 
-  assert.equal(item.showCount, 1);
-  assert.equal(item.hideCount, 1);
+  assert.equal(item.showCount, 2);
+  assert.equal(item.hideCount, 0);
   assert.equal((controller as unknown as { historyRefreshTimer: unknown }).historyRefreshTimer, undefined);
 
   tracker.source.dispose();

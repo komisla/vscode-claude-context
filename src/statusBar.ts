@@ -67,18 +67,21 @@ export class StatusBarController implements vscode.Disposable {
     }
 
     const config = vscode.workspace.getConfiguration('claudeContext');
-    const hideBelow = config.get<number>('hideBelow', 40);
+    const hideBelow = config.get<number>('hideBelow', 0);
     const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', true);
 
     if (this.latest?.fillPercent === undefined) {
       this.stopHistoryTimer();
-      this.item.hide();
+      this.item.text = '$(hubot) ctx idle';
+      this.item.tooltip = 'Claude Context Monitor: waiting for an active Claude Code session';
+      this.item.backgroundColor = undefined;
+      this.item.show();
       return;
     }
 
     const fillPercent = Math.round(this.latest.fillPercent);
 
-    if (fillPercent < hideBelow) {
+    if (hideBelow > 0 && fillPercent < hideBelow) {
       this.stopHistoryTimer();
       this.item.hide();
       return;

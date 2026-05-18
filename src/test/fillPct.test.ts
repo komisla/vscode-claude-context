@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import { calculateFillPercent, getModelLimits } from '../dataSource/jsonlTail';
 
 test('fill percent uses effective context window', () => {
-  const known = calculateFillPercent(77_500, 'claude-sonnet-4-6:thinking');
-  const unknown = calculateFillPercent(77_500, 'unexpected-model');
+  const sonnet = calculateFillPercent(77_500, 'claude-sonnet-4-6:thinking');
+  const opus = calculateFillPercent(77_500, 'claude-opus-4-7');
 
-  assert.equal(known.contextWindow, 1_000_000);
-  assert.equal(known.effectiveWindow, 923_000);
-  assert.equal(known.fillPercent, (77_500 / 923_000) * 100);
-  assert.notEqual(known.effectiveWindow, unknown.effectiveWindow);
-  assert.notEqual(known.fillPercent, unknown.fillPercent);
+  assert.equal(sonnet.contextWindow, 200_000);
+  assert.equal(sonnet.effectiveWindow, 178_808);
+  assert.equal(sonnet.fillPercent, (77_500 / 178_808) * 100);
+  // Opus has higher maxOutputTokens, so a smaller effectiveWindow than Sonnet
+  assert.equal(opus.effectiveWindow, 155_000);
+  assert.notEqual(sonnet.effectiveWindow, opus.effectiveWindow);
 });
 
 test('fill percent caps at 100', () => {
@@ -54,17 +55,17 @@ test('opus 4.7 uses the current Anthropic limits', () => {
   const limits = getModelLimits('claude-opus-4-7:thinking');
   const { effectiveWindow, fillPercent } = calculateFillPercent(155_000, 'claude-opus-4-7:thinking');
 
-  assert.equal(limits.contextWindow, 1_000_000);
-  assert.equal(limits.maxOutputTokens, 128_000);
-  assert.equal(effectiveWindow, 859_000);
-  assert.equal(fillPercent, (155_000 / 859_000) * 100);
+  assert.equal(limits.contextWindow, 200_000);
+  assert.equal(limits.maxOutputTokens, 32_000);
+  assert.equal(effectiveWindow, 155_000);
+  assert.equal(fillPercent, 100);
 });
 
 test('sonnet 4.6 uses the current Anthropic limits', () => {
   const limits = getModelLimits('claude-sonnet-4-6');
 
-  assert.equal(limits.contextWindow, 1_000_000);
-  assert.equal(limits.maxOutputTokens, 64_000);
+  assert.equal(limits.contextWindow, 200_000);
+  assert.equal(limits.maxOutputTokens, 8_192);
 });
 
 test('unknown non-opus models still use default limits', () => {
