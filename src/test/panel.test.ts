@@ -150,6 +150,60 @@ test('BreakdownPanel throttles historical usage refreshes', async () => {
   }
 });
 
+test('BreakdownPanel reuses cached history during rapid JSONL changes', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: true
+  });
+
+  const originalDateNow = Date.now;
+  let currentTime = Date.parse('2026-05-16T12:00:00Z');
+  Date.now = () => currentTime;
+
+  let refreshCalls = 0;
+  const historicalUsage = {
+    refresh: async () => {
+      refreshCalls += 1;
+      return makeHistorySnapshot();
+    }
+  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 35
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
+
+  try {
+    panel.open(tracker.source);
+    await waitFor(() => refreshCalls === 1);
+
+    for (const fillPercent of [36, 37, 38, 39, 40]) {
+      currentTime += 2_000;
+      tracker.fire({ fillPercent });
+      await flush();
+    }
+
+    assert.equal(refreshCalls, 1);
+
+    currentTime += 21_000;
+    tracker.fire({
+      fillPercent: 41
+    });
+    await waitFor(() => refreshCalls === 2);
+
+    assert.equal(refreshCalls, 2);
+  } finally {
+    Date.now = originalDateNow;
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
 test('BreakdownPanel retries historical usage refreshes after failures', async () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
