@@ -768,6 +768,44 @@ test('JsonlTailDataSource clears stale remainders after jsonl truncation', async
   }
 });
 
+test('refreshActiveSessionCore prunes inactive offsets and remainders', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+
+  const activeJsonlPath = path.join('active', 'session.jsonl');
+  const staleJsonlPath = path.join('stale', 'session.jsonl');
+  const mutable = dataSource as unknown as {
+    offsets: Map<string, number>;
+    remainders: Map<string, string>;
+    findActiveSession: () => Promise<{ readonly projectDir: string; readonly jsonlPath: string } | undefined>;
+    watchProjectDir: (projectDir: string) => void;
+    startActiveSessionPolling: (jsonlPath: string) => void;
+    readNewBytes: (filePath: string) => Promise<void>;
+    refreshActiveSessionCore: () => Promise<void>;
+  };
+
+  mutable.offsets.set(activeJsonlPath, 100);
+  mutable.offsets.set(staleJsonlPath, 200);
+  mutable.remainders.set(activeJsonlPath, 'active partial');
+  mutable.remainders.set(staleJsonlPath, 'stale partial');
+  mutable.findActiveSession = async () => ({
+    projectDir: path.dirname(activeJsonlPath),
+    jsonlPath: activeJsonlPath
+  });
+  mutable.watchProjectDir = () => undefined;
+  mutable.startActiveSessionPolling = () => undefined;
+  mutable.readNewBytes = async () => undefined;
+
+  try {
+    await mutable.refreshActiveSessionCore();
+
+    assert.deepEqual(Array.from(mutable.offsets.entries()), [[activeJsonlPath, 100]]);
+    assert.deepEqual(Array.from(mutable.remainders.entries()), [[activeJsonlPath, 'active partial']]);
+  } finally {
+    dataSource.dispose();
+  }
+});
+
 test('scheduleTick measures cooldown from refresh completion', async () => {
   const dataSource = new JsonlTailDataSource(createMockVscode([]));
   await delay(25);
@@ -988,6 +1026,57 @@ test('whenIdle waits for refresh and poll work that overlap', async () => {
   } finally {
     releaseRefresh?.();
     releasePoll?.();
+    dataSource.dispose();
+    await dataSource.whenIdle();
+  }
+});
+
+test('whenIdle waits for watcher setup work', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+  let releaseClaudeRootWatcher: (() => void) | undefined;
+  let releaseIdeWatcher: (() => void) | undefined;
+
+  try {
+    const mutable = dataSource as unknown as {
+      claudeRootWatcherSetup?: Promise<void>;
+      ideWatcherSetup?: Promise<void>;
+    };
+
+    let claudeRootWatcherSettled = false;
+    let ideWatcherSettled = false;
+    let idleSettled = false;
+
+    mutable.claudeRootWatcherSetup = new Promise<void>((resolve) => {
+      releaseClaudeRootWatcher = resolve;
+    }).then(() => {
+      claudeRootWatcherSettled = true;
+    });
+    mutable.ideWatcherSetup = new Promise<void>((resolve) => {
+      releaseIdeWatcher = resolve;
+    }).then(() => {
+      ideWatcherSettled = true;
+    });
+
+    const idle = dataSource.whenIdle().then(() => {
+      idleSettled = true;
+    });
+
+    releaseClaudeRootWatcher?.();
+    await delay(0);
+
+    assert.equal(claudeRootWatcherSettled, true);
+    assert.equal(ideWatcherSettled, false);
+    assert.equal(idleSettled, false);
+
+    releaseIdeWatcher?.();
+    await idle;
+
+    assert.equal(ideWatcherSettled, true);
+    assert.equal(idleSettled, true);
+  } finally {
+    releaseClaudeRootWatcher?.();
+    releaseIdeWatcher?.();
     dataSource.dispose();
     await dataSource.whenIdle();
   }
