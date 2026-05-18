@@ -38,7 +38,9 @@
     }
   },
   "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('out',{recursive:true,force:true})\"",
     "compile": "webpack --mode production",
+    "prepackage": "npm run clean",
     "package": "vsce package",
     "publish": "vsce publish",
     "watch": "webpack --mode development --watch",
