@@ -2,13 +2,8 @@ import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import type { ContextDataSource } from '../dataSource';
 import { reconstructContextBreakdown, type ContextBreakdown } from '../contextReconstructor';
-import {
-  DEFAULT_BUDGET_5H,
-  DEFAULT_BUDGET_7D,
-  HistoricalUsageReader,
-  type HistoricalUsageBudgets,
-  type HistoricalUsageSnapshot
-} from '../dataSource/historicalUsage';
+import { HistoricalUsageReader, type HistoricalUsageSnapshot } from '../dataSource/historicalUsage';
+import { RATE_LIMIT_REFRESH_MS, RateLimitReader, type RateLimitSnapshot } from '../dataSource/rateLimit';
 import dashboardHtml from './dashboard.html';
 
 const HISTORY_REFRESH_THROTTLE_MS = 30_000;
@@ -36,14 +31,20 @@ interface WebviewModelUsage {
 interface WebviewHistoricalUsageSnapshot {
   readonly tokens5h: number;
   readonly tokens7d: number;
-  readonly pct5h: number;
-  readonly pct7d: number;
   readonly hasData: boolean;
   readonly byModel: readonly WebviewModelUsage[];
 }
 
+interface WebviewRateLimitSnapshot {
+  readonly pct5h: number;
+  readonly pct7d: number;
+  readonly reset5h?: string;
+  readonly reset7d?: string;
+}
+
 interface WebviewSnapshotPayload {
   readonly breakdown: ContextBreakdown;
+  readonly rateLimit?: WebviewRateLimitSnapshot;
   readonly history?: WebviewHistoricalUsageSnapshot;
   readonly error?: string;
 }
@@ -65,14 +66,23 @@ type WebviewOutgoingMessage =
 export class BreakdownPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private readonly historicalUsage: HistoricalUsageReader;
+  private readonly rateLimit: RateLimitReader;
   private readonly panelSubscriptions: vscode.Disposable[] = [];
   private historySnapshot: HistoricalUsageSnapshot | undefined;
   private historyRefreshAt = 0;
   private historyRefreshing: Promise<HistoricalUsageSnapshot | undefined> | undefined;
+  private rateLimitSnapshot: RateLimitSnapshot | undefined;
+  private rateLimitRefreshAt = 0;
+  private rateLimitRefreshing: Promise<RateLimitSnapshot | undefined> | undefined;
   private postSequence = 0;
 
-  public constructor(private readonly extensionUri: vscode.Uri, historicalUsage: HistoricalUsageReader) {
+  public constructor(
+    private readonly extensionUri: vscode.Uri,
+    historicalUsage: HistoricalUsageReader,
+    rateLimit: RateLimitReader
+  ) {
     this.historicalUsage = historicalUsage;
+    this.rateLimit = rateLimit;
   }
 
   public dispose(): void {
@@ -138,8 +148,9 @@ export class BreakdownPanel implements vscode.Disposable {
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const latest = source.getLatest();
-    const [breakdown, history] = await Promise.all([
+    const [breakdown, rateLimit, history] = await Promise.all([
       reconstructContextBreakdown(latest, { workspaceRoot }),
+      this.readRateLimit(),
       this.readHistoricalUsage()
     ]);
 
@@ -151,6 +162,7 @@ export class BreakdownPanel implements vscode.Disposable {
       type: 'contextSnapshot',
       payload: {
         breakdown,
+        rateLimit: rateLimit === undefined ? undefined : toWebviewRateLimit(rateLimit),
         history: history === undefined ? undefined : toWebviewHistoricalUsage(history),
         error: latest.error
       }
@@ -173,7 +185,7 @@ export class BreakdownPanel implements vscode.Disposable {
     }
 
     this.historyRefreshing = this.historicalUsage
-      .refresh(this.getHistoricalUsageBudgets())
+      .refresh()
       .then((snapshot) => {
         this.historySnapshot = snapshot;
         this.historyRefreshAt = Date.now();
@@ -189,13 +201,36 @@ export class BreakdownPanel implements vscode.Disposable {
     return this.historyRefreshing;
   }
 
-  private getHistoricalUsageBudgets(): HistoricalUsageBudgets {
-    const config = vscode.workspace.getConfiguration('claudeContext');
+  private async readRateLimit(): Promise<RateLimitSnapshot | undefined> {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
+      return undefined;
+    }
 
-    return {
-      budget5h: config.get<number>('budget5h', DEFAULT_BUDGET_5H),
-      budget7d: config.get<number>('budget7d', DEFAULT_BUDGET_7D)
-    };
+    const now = Date.now();
+
+    if (this.rateLimitRefreshing !== undefined) {
+      return this.rateLimitRefreshing;
+    }
+
+    if (this.rateLimitRefreshAt !== 0 && now - this.rateLimitRefreshAt < RATE_LIMIT_REFRESH_MS) {
+      return this.rateLimitSnapshot;
+    }
+
+    this.rateLimitRefreshing = this.rateLimit
+      .refresh(now)
+      .then((snapshot) => {
+        this.rateLimitSnapshot = snapshot;
+        this.rateLimitRefreshAt = Date.now();
+        return snapshot;
+      })
+      .catch(() => {
+        return this.rateLimitSnapshot;
+      })
+      .finally(() => {
+        this.rateLimitRefreshing = undefined;
+      });
+
+    return this.rateLimitRefreshing;
   }
 
   private async handleMessage(panel: vscode.WebviewPanel, message: WebviewCommand): Promise<void> {
@@ -279,8 +314,6 @@ function toWebviewHistoricalUsage(
   return {
     tokens5h: snapshot.tokens5h,
     tokens7d: snapshot.tokens7d,
-    pct5h: snapshot.pct5h,
-    pct7d: snapshot.pct7d,
     hasData: snapshot.hasData,
     byModel: Array.from(snapshot.byModel.entries())
       .map(([model, usage]) => ({
@@ -290,5 +323,14 @@ function toWebviewHistoricalUsage(
       }))
       .filter((row) => row.tokens7d > 0)
       .sort((a, b) => b.tokens7d - a.tokens7d || a.model.localeCompare(b.model))
+  };
+}
+
+function toWebviewRateLimit(snapshot: RateLimitSnapshot): WebviewRateLimitSnapshot {
+  return {
+    pct5h: snapshot.pct5h,
+    pct7d: snapshot.pct7d,
+    reset5h: snapshot.reset5h,
+    reset7d: snapshot.reset7d
   };
 }

@@ -5,20 +5,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { isAssistantTurn, normalizeModel } from './jsonlTail';
 
-export const DEFAULT_BUDGET_5H = 5_000_000;
-export const DEFAULT_BUDGET_7D = 50_000_000;
-
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
 
 // Claude projects layout: <projectsRoot>/<slug>/<session>.jsonl (depth 2).
 // Allow one extra level for future sub-directories.
 const MAX_PROJECTS_SCAN_DEPTH = 3;
-
-export interface HistoricalUsageBudgets {
-  readonly budget5h: number;
-  readonly budget7d: number;
-}
 
 export interface ModelUsage {
   readonly tokens5h: number;
@@ -28,8 +20,6 @@ export interface ModelUsage {
 export interface HistoricalUsageSnapshot {
   readonly tokens5h: number;
   readonly tokens7d: number;
-  readonly pct5h: number;
-  readonly pct7d: number;
   readonly hasData: boolean;
   readonly byModel: ReadonlyMap<string, ModelUsage>;
 }
@@ -71,25 +61,19 @@ export class HistoricalUsageReader {
 
   public constructor(private readonly projectsRoot = path.join(os.homedir(), '.claude', 'projects')) {}
 
-  public async refresh(
-    budgets: HistoricalUsageBudgets,
-    nowMs = Date.now()
-  ): Promise<HistoricalUsageSnapshot> {
+  public async refresh(nowMs = Date.now()): Promise<HistoricalUsageSnapshot> {
     if (this.inFlight !== undefined) {
       return this.inFlight;
     }
 
-    this.inFlight = this.doRefresh(budgets, nowMs).finally(() => {
+    this.inFlight = this.doRefresh(nowMs).finally(() => {
       this.inFlight = undefined;
     });
 
     return this.inFlight;
   }
 
-  public calculateSnapshot(
-    budgets: HistoricalUsageBudgets,
-    nowMs = Date.now()
-  ): HistoricalUsageSnapshot {
+  public calculateSnapshot(nowMs = Date.now()): HistoricalUsageSnapshot {
     const min5h = nowMs - FIVE_HOURS_MS;
     const min7d = nowMs - SEVEN_DAYS_MS;
     let tokens5h = 0;
@@ -116,8 +100,6 @@ export class HistoricalUsageReader {
     return {
       tokens5h,
       tokens7d,
-      pct5h: calculateBudgetPercent(tokens5h, budgets.budget5h),
-      pct7d: calculateBudgetPercent(tokens7d, budgets.budget7d),
       hasData,
       byModel
     };
@@ -200,10 +182,7 @@ export class HistoricalUsageReader {
     }
   }
 
-  private async doRefresh(
-    budgets: HistoricalUsageBudgets,
-    nowMs: number
-  ): Promise<HistoricalUsageSnapshot> {
+  private async doRefresh(nowMs: number): Promise<HistoricalUsageSnapshot> {
     const visitedDirectories = new Set<string>();
     const jsonlPaths = await this.findJsonlFiles(this.projectsRoot, 0, visitedDirectories);
     const existingPaths = new Set(jsonlPaths);
@@ -224,7 +203,7 @@ export class HistoricalUsageReader {
       await this.refreshFile(jsonlPath, nowMs);
     }
 
-    return this.calculateSnapshot(budgets, nowMs);
+    return this.calculateSnapshot(nowMs);
   }
 
   private async findJsonlFiles(
@@ -441,14 +420,6 @@ function getModelUsage(
   const usage = { tokens5h: 0, tokens7d: 0 };
   byModel.set(model, usage);
   return usage;
-}
-
-function calculateBudgetPercent(tokens: number, budget: number): number {
-  if (!Number.isFinite(budget) || budget <= 0) {
-    return 0;
-  }
-
-  return Math.min((tokens / budget) * 100, 100);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

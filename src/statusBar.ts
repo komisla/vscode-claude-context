@@ -1,29 +1,21 @@
 import * as vscode from 'vscode';
 import { clearInterval, setInterval } from 'timers';
 import type { ContextDataSource, ContextUpdate } from './dataSource';
-import {
-  DEFAULT_BUDGET_5H,
-  DEFAULT_BUDGET_7D,
-  HistoricalUsageReader,
-  type HistoricalUsageBudgets,
-  type HistoricalUsageSnapshot
-} from './dataSource/historicalUsage';
+import { RATE_LIMIT_REFRESH_MS, RateLimitReader, type RateLimitSnapshot } from './dataSource/rateLimit';
 import { buildTooltipText } from './statusBarFormatting';
-
-const HISTORY_REFRESH_MS = 5 * 60 * 1_000;
 
 export class StatusBarController implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
   private readonly subscriptions: vscode.Disposable[] = [];
-  private readonly historicalUsage: HistoricalUsageReader;
+  private readonly rateLimit: RateLimitReader;
   private disposed = false;
-  private historyRefreshTimer: ReturnType<typeof setInterval> | undefined;
-  private historyRefreshing: Promise<void> | undefined;
+  private rateLimitRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  private rateLimitRefreshing: Promise<void> | undefined;
   private latest: ContextUpdate | undefined;
-  private latestHistory: HistoricalUsageSnapshot | undefined;
+  private latestRateLimit: RateLimitSnapshot | undefined;
 
-  public constructor(source: ContextDataSource, historicalUsage: HistoricalUsageReader) {
-    this.historicalUsage = historicalUsage;
+  public constructor(source: ContextDataSource, rateLimit: RateLimitReader) {
+    this.rateLimit = rateLimit;
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.item.command = 'claudeContext.openPanel';
     this.item.name = 'Claude Context Monitor';
@@ -38,12 +30,8 @@ export class StatusBarController implements vscode.Disposable {
         if (event.affectsConfiguration('claudeContext')) {
           this.render();
 
-          if (
-            event.affectsConfiguration('claudeContext.showHistoricalUsage') ||
-            event.affectsConfiguration('claudeContext.budget5h') ||
-            event.affectsConfiguration('claudeContext.budget7d')
-          ) {
-            this.scheduleHistoryRefresh();
+          if (event.affectsConfiguration('claudeContext.showHistoricalUsage')) {
+            this.scheduleRateLimitRefresh();
           }
         }
       })
@@ -54,7 +42,7 @@ export class StatusBarController implements vscode.Disposable {
 
   public dispose(): void {
     this.disposed = true;
-    this.stopHistoryTimer();
+    this.stopRateLimitTimer();
 
     for (const subscription of this.subscriptions) {
       subscription.dispose();
@@ -71,7 +59,7 @@ export class StatusBarController implements vscode.Disposable {
     const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', true);
 
     if (this.latest?.fillPercent === undefined) {
-      this.stopHistoryTimer();
+      this.stopRateLimitTimer();
       this.item.text = '$(hubot) ctx idle';
       this.item.tooltip = 'Claude Context Monitor: waiting for an active Claude Code session';
       this.item.backgroundColor = undefined;
@@ -82,23 +70,22 @@ export class StatusBarController implements vscode.Disposable {
     const fillPercent = Math.round(this.latest.fillPercent);
 
     if (hideBelow > 0 && fillPercent < hideBelow) {
-      this.stopHistoryTimer();
+      this.stopRateLimitTimer();
       this.item.hide();
       return;
     }
 
-    this.startHistoryTimerIfNeeded();
+    this.startRateLimitTimerIfNeeded();
 
-    const history =
-      showHistoricalUsage && this.latestHistory?.hasData === true ? this.latestHistory : undefined;
+    const rateLimit = showHistoricalUsage ? this.latestRateLimit : undefined;
     const parts = [`$(hubot) ctx ${fillPercent}%`];
 
-    if (history !== undefined) {
-      parts.push(`5h ${Math.round(history.pct5h)}%`, `7d ${Math.round(history.pct7d)}%`);
+    if (rateLimit !== undefined) {
+      parts.push(`5h ${Math.round(rateLimit.pct5h)}%`, `7d ${Math.round(rateLimit.pct7d)}%`);
     }
 
     this.item.text = parts.join('  ');
-    this.item.tooltip = this.buildTooltip(fillPercent, history);
+    this.item.tooltip = this.buildTooltip(fillPercent, rateLimit);
     this.item.backgroundColor =
       fillPercent >= 60
         ? new vscode.ThemeColor('statusBarItem.errorBackground')
@@ -108,75 +95,66 @@ export class StatusBarController implements vscode.Disposable {
     this.item.show();
   }
 
-  private startHistoryTimerIfNeeded(): void {
+  private startRateLimitTimerIfNeeded(): void {
     if (this.disposed) {
       return;
     }
 
     if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
-      this.stopHistoryTimer();
-      this.latestHistory = undefined;
+      this.stopRateLimitTimer();
+      this.latestRateLimit = undefined;
       return;
     }
 
-    if (this.historyRefreshTimer !== undefined) {
+    if (this.rateLimitRefreshTimer !== undefined) {
       return;
     }
 
-    this.scheduleHistoryRefresh();
-    this.historyRefreshTimer = setInterval(() => this.scheduleHistoryRefresh(), HISTORY_REFRESH_MS);
+    this.scheduleRateLimitRefresh();
+    this.rateLimitRefreshTimer = setInterval(() => this.scheduleRateLimitRefresh(), RATE_LIMIT_REFRESH_MS);
   }
 
-  private stopHistoryTimer(): void {
-    if (this.historyRefreshTimer !== undefined) {
-      clearInterval(this.historyRefreshTimer);
-      this.historyRefreshTimer = undefined;
+  private stopRateLimitTimer(): void {
+    if (this.rateLimitRefreshTimer !== undefined) {
+      clearInterval(this.rateLimitRefreshTimer);
+      this.rateLimitRefreshTimer = undefined;
     }
   }
 
-  private scheduleHistoryRefresh(): void {
+  private scheduleRateLimitRefresh(): void {
     if (this.disposed) {
       return;
     }
 
     if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
-      this.latestHistory = undefined;
-      this.stopHistoryTimer();
+      this.latestRateLimit = undefined;
+      this.stopRateLimitTimer();
       return;
     }
 
-    if (this.historyRefreshing !== undefined) {
+    if (this.rateLimitRefreshing !== undefined) {
       return;
     }
 
-    this.historyRefreshing = this.historicalUsage
-      .refresh(this.getHistoricalUsageBudgets())
+    this.rateLimitRefreshing = this.rateLimit
+      .refresh()
       .then((snapshot) => {
         if (this.disposed) {
           return;
         }
 
-        this.latestHistory = snapshot;
+        this.latestRateLimit = snapshot;
         this.render();
       })
       .catch(() => undefined)
       .finally(() => {
-        this.historyRefreshing = undefined;
+        this.rateLimitRefreshing = undefined;
       });
-  }
-
-  private getHistoricalUsageBudgets(): HistoricalUsageBudgets {
-    const config = vscode.workspace.getConfiguration('claudeContext');
-
-    return {
-      budget5h: config.get<number>('budget5h', DEFAULT_BUDGET_5H),
-      budget7d: config.get<number>('budget7d', DEFAULT_BUDGET_7D)
-    };
   }
 
   private buildTooltip(
     fillPercent: number,
-    history: HistoricalUsageSnapshot | undefined
+    rateLimit: RateLimitSnapshot | undefined
   ): vscode.MarkdownString {
     const totalTokens = this.latest?.totalTokens ?? 0;
     const effectiveWindow = this.latest?.effectiveWindow ?? this.latest?.contextWindow ?? 0;
@@ -187,28 +165,17 @@ export class StatusBarController implements vscode.Disposable {
         fillPercent,
         totalTokens,
         effectiveWindow,
-        history:
-          history === undefined
+        rateLimit:
+          rateLimit === undefined
             ? undefined
             : {
-                pct5h: history.pct5h,
-                pct7d: history.pct7d,
-                byModel: getModelUsageRows(history)
+                pct5h: rateLimit.pct5h,
+                pct7d: rateLimit.pct7d,
+                reset5h: rateLimit.reset5h,
+                reset7d: rateLimit.reset7d
               }
       })
     );
     return tooltip;
   }
-}
-
-function getModelUsageRows(
-  history: HistoricalUsageSnapshot
-): readonly { readonly model: string; readonly tokens7d: number }[] {
-  return Array.from(history.byModel.entries())
-    .map(([model, usage]) => ({
-      model,
-      tokens7d: usage.tokens7d
-    }))
-    .filter((row) => row.tokens7d > 0)
-    .sort((a, b) => b.tokens7d - a.tokens7d || a.model.localeCompare(b.model));
 }

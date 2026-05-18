@@ -277,8 +277,8 @@
         </p>
       </section>
 
-      <section class="panel" aria-labelledby="history-title">
-        <h2 id="history-title">Token usage vs. plan budget</h2>
+      <section id="history-section" class="panel hidden" aria-labelledby="history-title">
+        <h2 id="history-title">Plan rate limit utilization</h2>
         <div id="history-list"></div>
         <h3 id="model-title" class="hidden">Model breakdown</h3>
         <div id="model-list"></div>
@@ -352,6 +352,7 @@
       const startNewChat = document.getElementById('start-new-chat');
       const commandStatus = document.getElementById('command-status');
       const newChatInstructions = document.getElementById('new-chat-instructions');
+      const historySection = document.getElementById('history-section');
       const historyList = document.getElementById('history-list');
       const modelTitle = document.getElementById('model-title');
       const modelList = document.getElementById('model-list');
@@ -405,7 +406,7 @@
         emptyState.classList.remove('danger');
         dashboard.classList.remove('hidden');
         renderContext(breakdown);
-        renderHistory(snapshot.history);
+        renderHistory(snapshot.rateLimit, snapshot.history);
       }
 
       function renderContext(breakdown) {
@@ -466,18 +467,19 @@
         driftWarning.classList.remove('hidden');
       }
 
-      function renderHistory(history) {
-        if (!history || !history.hasData) {
-          historyList.replaceChildren(createMutedText('No historical usage data found.'));
+      function renderHistory(rateLimit, history) {
+        if (!rateLimit) {
+          historySection.classList.add('hidden');
           modelTitle.classList.add('hidden');
           modelList.replaceChildren();
           return;
         }
 
+        historySection.classList.remove('hidden');
         historyList.replaceChildren(
-          ...historyLabels.map(([key, label]) => createMetricRow(label, history[key] ?? 0, 100, true))
+          ...historyLabels.map(([key, label]) => createMetricRow(label, rateLimit[key] ?? 0, 100, true))
         );
-        renderModelUsage(history.byModel);
+        renderModelUsage(history?.hasData ? history.byModel : []);
       }
 
       function renderModelUsage(byModel) {

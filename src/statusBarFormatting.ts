@@ -1,19 +1,15 @@
-export interface StatusBarHistoryRow {
-  readonly model: string;
-  readonly tokens7d: number;
-}
-
-export interface StatusBarTooltipHistory {
+export interface StatusBarTooltipRateLimit {
   readonly pct5h: number;
   readonly pct7d: number;
-  readonly byModel: readonly StatusBarHistoryRow[];
+  readonly reset5h?: string;
+  readonly reset7d?: string;
 }
 
 export interface BuildTooltipTextOptions {
   readonly fillPercent: number;
   readonly totalTokens: number;
   readonly effectiveWindow: number;
-  readonly history?: StatusBarTooltipHistory;
+  readonly rateLimit?: StatusBarTooltipRateLimit;
 }
 
 export function formatCompactTokens(tokens: number): string {
@@ -46,17 +42,9 @@ export function buildTooltipText(options: BuildTooltipTextOptions): string {
     )} tokens)`
   ];
 
-  if (options.history !== undefined) {
-    lines.push(`Last 5h: ${Math.round(options.history.pct5h)}% of budget`);
-    lines.push(`Last 7d: ${Math.round(options.history.pct7d)}% of budget`);
-
-    if (options.history.byModel.length > 0) {
-      lines.push('Last 7d by model:');
-
-      for (const row of options.history.byModel) {
-        lines.push(`  ${row.model}  ${formatCompactTokens(row.tokens7d)} tokens`);
-      }
-    }
+  if (options.rateLimit !== undefined) {
+    lines.push(`Last 5h: ${Math.round(options.rateLimit.pct5h)}% of plan limit`);
+    lines.push(`Last 7d: ${Math.round(options.rateLimit.pct7d)}% of plan limit`);
   }
 
   if (options.fillPercent >= 60) {
