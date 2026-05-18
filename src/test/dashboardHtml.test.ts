@@ -29,6 +29,19 @@ test('dashboard includes issue 4 research links and heuristic wording', async ()
   assert.match(html, /GPT-tokenizer approximation/);
 });
 
+test('dashboard shows an initial loading state before context arrives', async () => {
+  const html = await readDashboardHtml();
+
+  assert.match(
+    html,
+    /<p id="empty-state" class="empty muted loading" role="status" aria-live="polite">Loading\.\.\.<\/p>/
+  );
+  assert.match(html, /\.empty\.loading::after/);
+  assert.match(html, /@keyframes loading-slide/);
+  assert.match(html, /emptyState\.classList\.remove\('loading'\)/);
+  assert.match(html, /Waiting for context data\./);
+});
+
 test('dashboard relies on VS Code message passing instead of webview storage', async () => {
   const html = await readDashboardHtml();
 

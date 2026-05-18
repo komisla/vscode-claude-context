@@ -179,9 +179,36 @@
         padding: 16px;
       }
 
+      .empty.loading::after {
+        animation: loading-slide 1.2s ease-in-out infinite;
+        background: var(--vscode-progressBar-background);
+        content: '';
+        display: block;
+        height: 3px;
+        margin-top: 12px;
+        width: 80px;
+      }
+
       .empty.danger {
         border-left: 3px solid var(--vscode-errorForeground);
         background: var(--vscode-inputValidation-errorBackground);
+      }
+
+      @keyframes loading-slide {
+        0% {
+          opacity: 0.35;
+          transform: translateX(0);
+        }
+
+        50% {
+          opacity: 1;
+          transform: translateX(32px);
+        }
+
+        100% {
+          opacity: 0.35;
+          transform: translateX(0);
+        }
       }
 
       details {
@@ -322,7 +349,7 @@
       </details>
     </main>
 
-    <p id="empty-state" class="empty muted">Waiting for context data.</p>
+    <p id="empty-state" class="empty muted loading" role="status" aria-live="polite">Loading...</p>
 
     <script nonce="{{nonce}}">
       const vscode = acquireVsCodeApi();
@@ -394,12 +421,14 @@
               ? 'No active Claude Code session detected.'
               : 'Waiting for context data.';
           emptyState.classList.toggle('danger', snapshot.error === NO_SESSION_ERROR);
+          emptyState.classList.remove('loading');
           emptyState.classList.remove('hidden');
           return;
         }
 
         emptyState.classList.add('hidden');
         emptyState.classList.remove('danger');
+        emptyState.classList.remove('loading');
         dashboard.classList.remove('hidden');
         renderContext(breakdown);
         renderHistory(snapshot.rateLimit, snapshot.history);
