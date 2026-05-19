@@ -94,19 +94,6 @@ export function isAssistantTurn(line: unknown): boolean {
   return line.message.role === 'assistant' && line.message.usage !== undefined;
 }
 
-export function getUsageTotal(usage: unknown): number {
-  if (!isRecord(usage)) {
-    return 0;
-  }
-
-  return (
-    numberValue(usage.input_tokens) +
-    numberValue(usage.cache_read_input_tokens) +
-    numberValue(usage.cache_creation_input_tokens) +
-    numberValue(usage.output_tokens)
-  );
-}
-
 // Context fill only counts input-side tokens — output_tokens are produced by the model,
 // not consumed as context input. Matches Claude Code's own context_window_percentage
 // calculation (anthropics/claude-code#11008).
