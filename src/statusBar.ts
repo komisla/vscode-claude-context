@@ -130,6 +130,7 @@ export class StatusBarController implements vscode.Disposable {
 
     this.scheduleRateLimitRefresh();
     this.rateLimitRefreshTimer = setInterval(() => this.scheduleRateLimitRefresh(), RATE_LIMIT_REFRESH_MS);
+    this.rateLimitRefreshTimer.unref();
   }
 
   private stopRateLimitTimer(): void {

@@ -92,7 +92,7 @@ export async function reconstructContextBreakdown(
 ): Promise<ContextBreakdown> {
   const now = options.now?.() ?? Date.now();
   const homeDir = options.homeDir ?? os.homedir();
-  const key = await getCacheKey(source, options.workspaceRoot, homeDir);
+  const key = await getCacheKey(source, options.workspaceRoot, homeDir, now);
   const totalTokens = source.totalTokens;
   const cached = cache.get(key);
 
@@ -128,8 +128,8 @@ export async function reconstructContextBreakdown(
 
   const promise = (async () => {
     const systemPrompt = CC_BASE_SYSTEM_PROMPT_TOKENS;
-    const claudeMd = await countClaudeMdTokens(options.workspaceRoot, homeDir);
-    const memory = await countMemoryTokens(source.sessionPath);
+    const claudeMd = await countClaudeMdTokens(options.workspaceRoot, homeDir, now);
+    const memory = await countMemoryTokens(source.sessionPath, now);
     const tools = await estimateToolTokens(source.sessionPath);
     const conversation = Math.max(0, totalTokens - systemPrompt - claudeMd - memory - tools);
     const systemPromptDriftWarning = conversation === 0 && totalTokens >= MIN_TOKENS_FOR_DRIFT_WARNING;
@@ -187,7 +187,8 @@ function createBreakdown(
 
 export async function countClaudeMdTokens(
   workspaceRoot: string | undefined,
-  homeDir = os.homedir()
+  homeDir = os.homedir(),
+  now = Date.now()
 ): Promise<number> {
   const claudeMdPaths = new Set<string>();
 
@@ -202,7 +203,7 @@ export async function countClaudeMdTokens(
   const claudeMdFiles = await Promise.all(
     Array.from(claudeMdPaths).map(async (filePath) => ({
       filePath,
-      snapshot: await readCachedTextFile(filePath)
+      snapshot: await readCachedTextFile(filePath, now)
     }))
   );
 
@@ -219,6 +220,7 @@ export async function countClaudeMdTokens(
       filePath,
       workspaceRoot,
       homeDir,
+      now,
       new Set([path.resolve(filePath)])
     );
   }
@@ -226,7 +228,10 @@ export async function countClaudeMdTokens(
   return total;
 }
 
-export async function countMemoryTokens(sessionPath: string | undefined): Promise<number> {
+export async function countMemoryTokens(
+  sessionPath: string | undefined,
+  now = Date.now()
+): Promise<number> {
   if (sessionPath === undefined) {
     return 0;
   }
@@ -250,7 +255,7 @@ export async function countMemoryTokens(sessionPath: string | undefined): Promis
       return [
         (async () => ({
           filePath,
-          snapshot: await readCachedTextFile(filePath)
+          snapshot: await readCachedTextFile(filePath, now)
         }))()
       ];
     })
@@ -315,7 +320,8 @@ export function isMcpToolName(toolName: string): boolean {
 async function getCacheKey(
   source: ContextUpdate,
   workspaceRoot: string | undefined,
-  homeDir: string
+  homeDir: string,
+  now: number
 ): Promise<string> {
   const parts = [
     source.sessionPath,
@@ -325,25 +331,29 @@ async function getCacheKey(
     source.fillPercent,
     workspaceRoot,
     homeDir,
-    ...(await getSessionPathFingerprint(source.sessionPath)),
-    ...(await getClaudeMdFingerprint(workspaceRoot, homeDir)),
-    ...(await getMemoryFingerprint(source.sessionPath))
+    ...(await getSessionPathFingerprint(source.sessionPath, now)),
+    ...(await getClaudeMdFingerprint(workspaceRoot, homeDir, now)),
+    ...(await getMemoryFingerprint(source.sessionPath, now))
   ];
 
   return parts.join(CACHE_KEY_SEPARATOR);
 }
 
-async function getSessionPathFingerprint(sessionPath: string | undefined): Promise<readonly string[]> {
+async function getSessionPathFingerprint(
+  sessionPath: string | undefined,
+  now: number
+): Promise<readonly string[]> {
   if (sessionPath === undefined) {
     return [];
   }
 
-  return [await fingerprintPath(sessionPath)];
+  return [await fingerprintPath(sessionPath, now)];
 }
 
 async function getClaudeMdFingerprint(
   workspaceRoot: string | undefined,
-  homeDir: string
+  homeDir: string,
+  now: number
 ): Promise<readonly string[]> {
   const claudeMdPaths = new Set<string>();
 
@@ -358,13 +368,17 @@ async function getClaudeMdFingerprint(
   const fingerprints: string[] = [];
 
   for (const filePath of claudeMdPaths) {
-    fingerprints.push(await fingerprintPath(filePath));
+    fingerprints.push(await fingerprintPath(filePath, now));
   }
 
   return fingerprints;
 }
 
-async function getMemoryFingerprint(sessionPath: string | undefined): Promise<readonly string[]> {
+async function getMemoryFingerprint(
+  sessionPath: string | undefined,
+  now: number
+): Promise<readonly string[]> {
+
   if (sessionPath === undefined) {
     return [];
   }
@@ -375,7 +389,7 @@ async function getMemoryFingerprint(sessionPath: string | undefined): Promise<re
   try {
     entries = await fsp.readdir(memoryDir, { withFileTypes: true });
   } catch {
-    return [await fingerprintPath(memoryDir)];
+    return [await fingerprintPath(memoryDir, now)];
   }
 
   const fingerprints: string[] = [];
@@ -387,15 +401,14 @@ async function getMemoryFingerprint(sessionPath: string | undefined): Promise<re
       continue;
     }
 
-    fingerprints.push(await fingerprintPath(path.join(memoryDir, entry.name)));
+    fingerprints.push(await fingerprintPath(path.join(memoryDir, entry.name), now));
   }
 
   return fingerprints;
 }
 
-async function fingerprintPath(filePath: string): Promise<string> {
+async function fingerprintPath(filePath: string, now: number): Promise<string> {
   const resolvedPath = path.resolve(filePath);
-  const now = Date.now();
   const cached = missingFingerprintCache.get(resolvedPath);
 
   if (cached !== undefined && cached.expiresAt > now) {
@@ -453,6 +466,7 @@ async function countImportedClaudeMdTokens(
   sourcePath: string,
   workspaceRoot: string | undefined,
   homeDir: string,
+  now: number,
   visited: Set<string>,
   depth = 1
 ): Promise<number> {
@@ -480,7 +494,7 @@ async function countImportedClaudeMdTokens(
       continue;
     }
 
-    const importedSnapshot = await readCachedTextFile(normalizedPath);
+    const importedSnapshot = await readCachedTextFile(normalizedPath, now);
 
     if (importedSnapshot === undefined) {
       continue;
@@ -493,6 +507,7 @@ async function countImportedClaudeMdTokens(
       normalizedPath,
       workspaceRoot,
       homeDir,
+      now,
       visited,
       depth + 1
     );
@@ -590,9 +605,12 @@ async function readTextFile(filePath: string): Promise<string | undefined> {
   }
 }
 
-async function readCachedTextFile(filePath: string): Promise<CachedTextFile | undefined> {
+async function readCachedTextFile(
+  filePath: string,
+  now: number
+): Promise<CachedTextFile | undefined> {
   const resolvedPath = path.resolve(filePath);
-  const fingerprint = await fingerprintPath(filePath);
+  const fingerprint = await fingerprintPath(filePath, now);
   const cached = textFileCache.get(resolvedPath);
 
   if (cached !== undefined && cached.fingerprint === fingerprint) {
@@ -686,12 +704,21 @@ function maybePruneExpiredContextBreakdownCache(now: number): void {
 
   lastContextBreakdownPruneAt = now;
   pruneExpiredContextBreakdownCache(now);
+  pruneExpiredMissingFingerprintCache(now);
 }
 
 function pruneExpiredContextBreakdownCache(now: number): void {
   for (const entry of cache.values()) {
     if (entry.expiresAt <= now) {
       cache.delete(entry.key);
+    }
+  }
+}
+
+function pruneExpiredMissingFingerprintCache(now: number): void {
+  for (const [filePath, entry] of missingFingerprintCache.entries()) {
+    if (entry.expiresAt <= now) {
+      missingFingerprintCache.delete(filePath);
     }
   }
 }

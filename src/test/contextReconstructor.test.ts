@@ -956,6 +956,80 @@ test('reconstructor caches missing CLAUDE.md fingerprints between ticks', async 
   }
 });
 
+test('reconstructor prunes expired missing CLAUDE.md fingerprints on cache hits', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-fingerprint-prune-'));
+  clearAllContextCaches();
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const claudeDir = path.join(homeDir, '.claude');
+    const workspaceRoot = path.join(root, 'repo', 'a', 'b', 'c', 'd', 'workspace');
+    const workspaceClaude = path.join(workspaceRoot, 'CLAUDE.md');
+    const homeClaude = path.join(claudeDir, 'CLAUDE.md');
+
+    await mkdir(claudeDir, { recursive: true });
+    await mkdir(workspaceRoot, { recursive: true });
+    await writeFile(homeClaude, 'shared content');
+    await writeFile(workspaceClaude, 'workspace content');
+
+    const mutableMapPrototype = Map.prototype as unknown as {
+      delete: (this: Map<unknown, unknown>, key: unknown) => boolean;
+    };
+    const originalDelete = mutableMapPrototype.delete;
+    let missingFingerprintDeletes = 0;
+
+    mutableMapPrototype.delete = function (this: Map<unknown, unknown>, key: unknown): boolean {
+      if (
+        typeof key === 'string' &&
+        key.endsWith('CLAUDE.md') &&
+        key !== workspaceClaude &&
+        key !== homeClaude
+      ) {
+        missingFingerprintDeletes += 1;
+      }
+
+      return originalDelete.call(this, key);
+    };
+
+    try {
+      const sourceWithMissingFingerprints = {
+        totalTokens: 5_000,
+        effectiveWindow: 178_808,
+        fillPercent: 3
+      } satisfies ContextUpdate;
+      const sourceWithoutWorkspace = {
+        effectiveWindow: 178_808,
+        fillPercent: 3
+      } satisfies ContextUpdate;
+
+      await reconstructContextBreakdown(sourceWithMissingFingerprints, {
+        workspaceRoot,
+        homeDir,
+        now: () => 1_000
+      });
+
+      await reconstructContextBreakdown(sourceWithoutWorkspace, {
+        homeDir,
+        now: () => 50_000
+      });
+
+      missingFingerprintDeletes = 0;
+
+      await reconstructContextBreakdown(sourceWithoutWorkspace, {
+        homeDir,
+        now: () => 61_000
+      });
+
+      assert.ok(missingFingerprintDeletes > 0);
+    } finally {
+      mutableMapPrototype.delete = originalDelete;
+    }
+  } finally {
+    clearAllContextCaches();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('reconstructor shares in-flight work for concurrent calls', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-inflight-'));
   clearAllContextCaches();
