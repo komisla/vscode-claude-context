@@ -730,6 +730,8 @@ test('JsonlTailDataSource emits zero-token updates when a fresh session starts',
     assert.equal(initialUpdate.sessionPath, fixture.sessionPath);
 
     const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 0);
+    // Intentionally overwrites (not appends) to simulate a session reset; relies on
+    // readNewBytesCore resetting its offset when it detects the file has shrunk.
     await writeFile(
       fixture.sessionPath,
       `${JSON.stringify(makeAssistantLine('2026-05-16T11:01:00Z', 0))}\n`
