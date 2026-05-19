@@ -408,6 +408,10 @@ function getHistoricalBudgetTokens(usage: unknown): number {
     return 0;
   }
 
+  // Historical usage tracks plan-limit consumption, not live context-window fill.
+  // Anthropic plan accounting consumes fresh input, cache reads, cache writes,
+  // and model output; live context fill intentionally excludes output_tokens
+  // because generated output is not input-side context.
   return (
     numberValue(usage.input_tokens) +
     numberValue(usage.cache_read_input_tokens) +

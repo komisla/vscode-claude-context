@@ -50,6 +50,60 @@ test('historical parser includes cache read tokens in budget usage', () => {
   assert.equal(entry?.tokens, 1_000_080);
 });
 
+test('historical reader pins plan-limit formula against fixed JSONL sample', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-formula-'));
+
+  try {
+    const projectDir = path.join(root, 'project');
+    await mkdir(projectDir);
+    await writeFile(
+      path.join(projectDir, 'session.jsonl'),
+      [
+        JSON.stringify({
+          timestamp: '2026-05-16T11:00:00Z',
+          type: 'message',
+          message: {
+            role: 'assistant',
+            model: 'claude-sonnet-4-6',
+            usage: {
+              input_tokens: 11,
+              cache_read_input_tokens: 101,
+              cache_creation_input_tokens: 1_001,
+              output_tokens: 10_001
+            }
+          }
+        }),
+        JSON.stringify({
+          timestamp: '2026-05-16T11:05:00Z',
+          type: 'message',
+          message: {
+            role: 'user',
+            usage: {
+              input_tokens: 999,
+              cache_read_input_tokens: 999,
+              cache_creation_input_tokens: 999,
+              output_tokens: 999
+            }
+          }
+        })
+      ].join('\n') + '\n'
+    );
+
+    const reader = new HistoricalUsageReader(root);
+    const snapshot = await reader.refresh(NOW);
+    const expectedPlanTokens = 11 + 101 + 1_001 + 10_001;
+
+    assert.equal(snapshot.tokens5h, expectedPlanTokens);
+    assert.equal(snapshot.tokens7d, expectedPlanTokens);
+    assert.deepEqual(snapshot.byModel.get('claude-sonnet-4-6'), {
+      tokens5h: expectedPlanTokens,
+      tokens7d: expectedPlanTokens
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('historical reader includes cache read tokens in snapshot totals', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-history-cache-read-'));
 
