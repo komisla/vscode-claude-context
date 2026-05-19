@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsPromises } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ContextUpdate } from '../dataSource';
@@ -486,6 +486,47 @@ test('estimateToolTokens caches deferred tool sets by session fingerprint', asyn
   }
 });
 
+test('estimateToolTokens keeps valid non-tool partial lines as remainders', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-tools-remainder-'));
+  clearAllContextCaches();
+
+  const mutableMapPrototype = Map.prototype as unknown as {
+    set: (
+      this: Map<unknown, unknown>,
+      key: unknown,
+      value: unknown
+    ) => Map<unknown, unknown>;
+  };
+  const originalSet = mutableMapPrototype.set;
+  let toolSetRemainder: string | undefined;
+
+  mutableMapPrototype.set = function (
+    this: Map<unknown, unknown>,
+    key: unknown,
+    value: unknown
+  ): Map<unknown, unknown> {
+    if (isCachedToolSetValue(value)) {
+      toolSetRemainder = value.remainder;
+    }
+
+    return originalSet.call(this, key, value);
+  };
+
+  try {
+    const sessionPath = path.join(root, 'session.jsonl');
+    const partialMessage = JSON.stringify({ type: 'message' });
+
+    await writeFile(sessionPath, `${makeToolDelta(['Bash'])}\n${partialMessage}`);
+
+    assert.equal(await estimateToolTokens(sessionPath, 1_000), TOKENS_PER_BUILTIN_TOOL);
+    assert.equal(toolSetRemainder, partialMessage);
+  } finally {
+    mutableMapPrototype.set = originalSet;
+    clearAllContextCaches();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('reconstructor warns when fixed categories exceed total tokens', async () => {
   clearAllContextCaches();
 
@@ -608,6 +649,101 @@ test('reconstructor invalidates when sessionPath mtime changes', async () => {
     assert.equal(first.categories.tools, TOKENS_PER_BUILTIN_TOOL);
     assert.equal(cached.categories.tools, TOKENS_PER_BUILTIN_TOOL * 2);
     assert.equal(invalidated.categories.tools, TOKENS_PER_BUILTIN_TOOL * 2);
+  } finally {
+    clearAllContextCaches();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('reconstructor reuses fixed categories within a total-token bucket', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-token-bucket-'));
+  clearAllContextCaches();
+
+  try {
+    const sessionPath = path.join(root, 'session.jsonl');
+    const initialLine = `${makeToolDelta(['Bash'])}\n`;
+    const appendedLine = `${JSON.stringify({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        usage: {
+          input_tokens: 20_100,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          output_tokens: 0
+        }
+      }
+    })}\n`;
+    const mutableFsPromises = fsPromises as {
+      open: (...args: unknown[]) => Promise<unknown>;
+    };
+    const originalOpen = mutableFsPromises.open;
+    const sessionReadLengths: number[] = [];
+
+    mutableFsPromises.open = async (...args: unknown[]) => {
+      const handle = await originalOpen(...args);
+      const [filePath] = args;
+
+      if (filePath === sessionPath) {
+        const mutableHandle = handle as {
+          read: (...readArgs: unknown[]) => Promise<unknown>;
+        };
+        const originalRead = mutableHandle.read;
+
+        mutableHandle.read = async (...readArgs: unknown[]) => {
+          const length = readArgs[2];
+
+          if (typeof length === 'number') {
+            sessionReadLengths.push(length);
+          }
+
+          return Reflect.apply(originalRead, handle, readArgs) as Promise<unknown>;
+        };
+      }
+
+      return handle;
+    };
+
+    await writeFile(sessionPath, initialLine);
+
+    try {
+      const source = {
+        totalTokens: 20_000,
+        effectiveWindow: 178_808,
+        fillPercent: 11,
+        sessionPath
+      } satisfies ContextUpdate;
+      const first = await reconstructContextBreakdown(source, {
+        workspaceRoot: root,
+        homeDir: path.join(root, 'home'),
+        now: () => 1_000
+      });
+
+      sessionReadLengths.length = 0;
+      await appendFile(sessionPath, appendedLine);
+
+      const cached = await reconstructContextBreakdown(
+        {
+          ...source,
+          totalTokens: 20_100,
+          fillPercent: 11.2
+        },
+        {
+          workspaceRoot: root,
+          homeDir: path.join(root, 'home'),
+          now: () => 2_000
+        }
+      );
+
+      assert.equal(first.categories.tools, TOKENS_PER_BUILTIN_TOOL);
+      assert.equal(cached.categories.tools, TOKENS_PER_BUILTIN_TOOL);
+      assert.equal(cached.totalTokens, 20_100);
+      assert.equal(cached.fillPercent, 11.2);
+      assert.equal(sessionReadLengths.at(-1), Buffer.byteLength(appendedLine));
+      assert.ok(sessionReadLengths.every((length) => length <= 64 || length === Buffer.byteLength(appendedLine)));
+    } finally {
+      mutableFsPromises.open = originalOpen;
+    }
   } finally {
     clearAllContextCaches();
     await rm(root, { recursive: true, force: true });
@@ -1215,6 +1351,28 @@ function isCachedTextFileValue(value: unknown): value is {
     typeof candidate.fingerprint === 'string' &&
     typeof candidate.content === 'string' &&
     typeof candidate.tokenCount === 'number'
+  );
+}
+
+function isCachedToolSetValue(value: unknown): value is {
+  readonly offset: number;
+  readonly remainder: string;
+  readonly tools: ReadonlySet<string>;
+} {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as {
+    readonly offset?: unknown;
+    readonly remainder?: unknown;
+    readonly tools?: unknown;
+  };
+
+  return (
+    typeof candidate.offset === 'number' &&
+    typeof candidate.remainder === 'string' &&
+    candidate.tools instanceof Set
   );
 }
 
