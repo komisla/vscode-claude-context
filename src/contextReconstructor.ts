@@ -131,8 +131,11 @@ export async function reconstructContextBreakdown(
     const claudeMd = await countClaudeMdTokens(options.workspaceRoot, homeDir, now);
     const memory = await countMemoryTokens(source.sessionPath, now);
     const tools = await estimateToolTokens(source.sessionPath);
-    const conversation = Math.max(0, totalTokens - systemPrompt - claudeMd - memory - tools);
-    const systemPromptDriftWarning = conversation === 0 && totalTokens >= MIN_TOKENS_FOR_DRIFT_WARNING;
+    const nonConversationTokens = systemPrompt + claudeMd + memory + tools;
+    const conversation = Math.max(0, totalTokens - nonConversationTokens);
+    const systemPromptDriftWarning =
+      nonConversationTokens > totalTokens ||
+      (conversation === 0 && totalTokens >= MIN_TOKENS_FOR_DRIFT_WARNING);
     const breakdown = createBreakdown(
       source,
       {
@@ -728,8 +731,10 @@ function isAllowedClaudeMdImport(
   workspaceRoot: string | undefined,
   homeDir: string
 ): boolean {
+  const claudeConfigRoot = path.join(homeDir, '.claude');
+
   return (
-    isPathWithinRoot(resolvedPath, homeDir) ||
+    isPathWithinRoot(resolvedPath, claudeConfigRoot) ||
     isPathWithinRoot(resolvedPath, sourceDir) ||
     (workspaceRoot !== undefined && isPathWithinRoot(resolvedPath, workspaceRoot))
   );
