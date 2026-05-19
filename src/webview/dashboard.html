@@ -315,8 +315,17 @@
         </p>
       </section>
 
-      <section id="history-section" class="panel hidden" aria-labelledby="history-title">
+      <section
+        id="history-section"
+        class="panel hidden"
+        aria-labelledby="history-title"
+        aria-describedby="history-formula-note"
+        title="Plan utilization follows Anthropic plan-limit accounting: input, cache read, cache creation, and output tokens. It is not identical to live context fill, which excludes output tokens."
+      >
         <h2 id="history-title">Plan rate limit utilization</h2>
+        <p id="history-formula-note" class="muted status">
+          Plan-limit accounting, not identical to live context fill.
+        </p>
         <div id="history-list"></div>
         <h3 id="model-title" class="hidden">Model breakdown</h3>
         <div id="model-list"></div>
