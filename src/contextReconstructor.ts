@@ -525,7 +525,7 @@ async function countImportedClaudeMdTokens(
   return total;
 }
 
-function extractAtImports(content: string): readonly string[] {
+export function extractAtImports(content: string): readonly string[] {
   const imports: string[] = [];
   const stripped = content
     .replace(/<!--[\s\S]*?-->/g, ' ')
@@ -548,8 +548,7 @@ function extractAtImports(content: string): readonly string[] {
       !importPath.includes('://') &&
       (importPath.startsWith('./') ||
         importPath.startsWith('../') ||
-        importPath.startsWith('~/') ||
-        importPath.startsWith('/'))
+        importPath.startsWith('~/'))
     ) {
       imports.push(importPath);
     }
