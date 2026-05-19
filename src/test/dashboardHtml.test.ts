@@ -13,7 +13,8 @@ test('dashboard includes issue 4 research links and heuristic wording', async ()
 
   assert.match(html, /How context fill affects response quality/);
   assert.match(html, /quality heuristics, not Anthropic product limits/);
-  assert.match(html, /system prompt constants are out of date/);
+  assert.match(html, /system prompt constant may be outdated/);
+  assert.match(html, /conversation tokens were clamped/);
   assert.match(html, /No active Claude Code session detected\./);
   assert.match(html, /https:\/\/arxiv\.org\/abs\/2307\.03172/);
   assert.match(html, /https:\/\/arxiv\.org\/abs\/2502\.05167/);

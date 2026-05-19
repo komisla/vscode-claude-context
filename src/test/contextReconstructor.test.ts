@@ -95,17 +95,17 @@ test('counts CLAUDE.md relative imports with spaces in the path', async () => {
   }
 });
 
-test('counts CLAUDE.md home imports with spaces in the path', async () => {
+test('counts CLAUDE.md ~/.claude imports with spaces in the path', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-context-home-space-import-'));
 
   try {
     const homeDir = path.join(root, 'home');
     const workspaceRoot = path.join(root, 'repo', 'app');
-    const homeProjectDir = path.join(homeDir, 'Documents', 'My Project');
+    const homeProjectDir = path.join(homeDir, '.claude', 'My Project');
     await mkdir(workspaceRoot, { recursive: true });
     await mkdir(homeProjectDir, { recursive: true });
 
-    const workspaceClaude = 'workspace rules @~/Documents/My Project/CLAUDE.md';
+    const workspaceClaude = 'workspace rules @~/.claude/My Project/CLAUDE.md';
     const importContent = 'home import with spaces should be counted';
 
     await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
@@ -114,6 +114,28 @@ test('counts CLAUDE.md home imports with spaces in the path', async () => {
     const expected = countTokens(workspaceClaude) + countTokens(importContent);
 
     assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects CLAUDE.md ~/ imports outside .claude', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-home-import-guard-'));
+
+  try {
+    const homeDir = path.join(root, 'home');
+    const workspaceRoot = path.join(root, 'repo', 'app');
+    const documentsDir = path.join(homeDir, 'Documents');
+    await mkdir(workspaceRoot, { recursive: true });
+    await mkdir(documentsDir, { recursive: true });
+
+    const workspaceClaude = 'workspace rules @~/Documents/anything.txt';
+    const rejectedImport = 'document import should not be counted';
+
+    await writeFile(path.join(workspaceRoot, 'CLAUDE.md'), workspaceClaude);
+    await writeFile(path.join(documentsDir, 'anything.txt'), rejectedImport);
+
+    assert.equal(await countClaudeMdTokens(workspaceRoot, homeDir), countTokens(workspaceClaude));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -406,7 +428,7 @@ test('replays deferred tool deltas and counts MCP tools separately', async () =>
   }
 });
 
-test('reconstructor does not warn on small new sessions', async () => {
+test('reconstructor warns when fixed categories exceed total tokens', async () => {
   clearAllContextCaches();
 
   const breakdown = await reconstructContextBreakdown(
@@ -426,7 +448,7 @@ test('reconstructor does not warn on small new sessions', async () => {
 
   assert.equal(breakdown.categories.systemPrompt, CC_BASE_SYSTEM_PROMPT_TOKENS);
   assert.equal(breakdown.categories.conversation, 0);
-  assert.equal(breakdown.systemPromptDriftWarning, false);
+  assert.equal(breakdown.systemPromptDriftWarning, true);
   assert.equal(breakdown.isEstimate, true);
   assert.equal(breakdown.fillPercent, 1);
   assert.equal(breakdown.contextWindow, 200_000);
