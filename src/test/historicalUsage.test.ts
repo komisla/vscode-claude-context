@@ -25,12 +25,12 @@ test('historical parser sums assistant budget usage with timestamp', () => {
 
   assert.deepEqual(parseHistoricalUsageLine(JSON.stringify(line)), {
     timestampMs: Date.parse(line.timestamp),
-    tokens: 80,
+    tokens: 100,
     model: 'unknown/absent'
   });
 });
 
-test('historical parser excludes cache read tokens from budget usage', () => {
+test('historical parser includes cache read tokens in budget usage', () => {
   const line = {
     timestamp: '2026-05-16T11:00:00Z',
     type: 'message',
@@ -47,7 +47,40 @@ test('historical parser excludes cache read tokens from budget usage', () => {
 
   const entry = parseHistoricalUsageLine(JSON.stringify(line));
 
-  assert.equal(entry?.tokens, 80);
+  assert.equal(entry?.tokens, 1_000_080);
+});
+
+test('historical reader includes cache read tokens in snapshot totals', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-history-cache-read-'));
+
+  try {
+    const projectDir = path.join(root, 'project');
+    await mkdir(projectDir);
+    await writeFile(
+      path.join(projectDir, 'session.jsonl'),
+      `${JSON.stringify({
+        timestamp: '2026-05-16T11:00:00Z',
+        type: 'message',
+        message: {
+          role: 'assistant',
+          usage: {
+            input_tokens: 10,
+            cache_read_input_tokens: 1_000,
+            cache_creation_input_tokens: 30,
+            output_tokens: 40
+          }
+        }
+      })}\n`
+    );
+
+    const reader = new HistoricalUsageReader(root);
+    const snapshot = await reader.refresh(NOW);
+
+    assert.equal(snapshot.tokens5h, 1_080);
+    assert.equal(snapshot.tokens7d, 1_080);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('historical parser ignores sidechain and invalid timestamps', () => {

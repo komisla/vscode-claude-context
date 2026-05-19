@@ -409,6 +409,7 @@ function getHistoricalBudgetTokens(usage: unknown): number {
 
   return (
     numberValue(usage.input_tokens) +
+    numberValue(usage.cache_read_input_tokens) +
     numberValue(usage.cache_creation_input_tokens) +
     numberValue(usage.output_tokens)
   );
