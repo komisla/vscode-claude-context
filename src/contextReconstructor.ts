@@ -1,8 +1,8 @@
-import { createReadStream, promises as fsp } from 'fs';
+import { promises as fsp } from 'fs';
+import { Buffer } from 'buffer';
 import * as os from 'os';
 import * as path from 'path';
 import * as process from 'process';
-import { createInterface } from 'readline';
 import { encode } from 'gpt-tokenizer';
 import type { ContextUpdate } from './dataSource';
 
@@ -10,11 +10,13 @@ export const CC_BASE_SYSTEM_PROMPT_TOKENS = 8_000; // measured on CC v2.1.143, 2
 export const TOKENS_PER_BUILTIN_TOOL = 300;
 export const TOKENS_PER_MCP_TOOL = 400;
 export const BREAKDOWN_CACHE_MS = 30_000;
+export const BREAKDOWN_TOTAL_TOKEN_BUCKET_SIZE = 5_000;
 const MIN_TOKENS_FOR_DRIFT_WARNING = 20_000;
 const CONTEXT_BREAKDOWN_PRUNE_INTERVAL_MS = 60_000;
 const CLAUDE_MD_MISSING_FINGERPRINT_TTL_MS = 5_000;
 const MAX_IMPORTED_CLAUDE_MD_DEPTH = 10;
 const CACHE_KEY_SEPARATOR = '\0';
+const TOOL_CACHE_SUFFIX_BYTES = 64;
 
 export interface ContextBreakdownCategories {
   readonly systemPrompt: number;
@@ -62,7 +64,10 @@ interface CachedTextFile {
 }
 
 interface CachedToolSet {
-  readonly fingerprint: string;
+  readonly mtimeMs: number;
+  readonly offset: number;
+  readonly remainder: string;
+  readonly suffix: Buffer;
   readonly tools: ReadonlySet<string>;
 }
 
@@ -105,7 +110,7 @@ export async function reconstructContextBreakdown(
 
   if (cached !== undefined && cached.expiresAt > now) {
     maybePruneExpiredContextBreakdownCache(now);
-    return cached.value;
+    return refreshCachedBreakdown(cached.value, source, now);
   }
 
   if (totalTokens === undefined) {
@@ -193,6 +198,37 @@ function createBreakdown(
     isEstimate: true,
     measuredAt: new Date(measuredAtMs)
   };
+}
+
+function refreshCachedBreakdown(
+  cached: ContextBreakdown,
+  source: ContextUpdate,
+  measuredAtMs: number
+): ContextBreakdown {
+  const totalTokens = source.totalTokens ?? 0;
+  const fixedCategories = {
+    systemPrompt: cached.categories.systemPrompt,
+    claudeMd: cached.categories.claudeMd,
+    memory: cached.categories.memory,
+    tools: cached.categories.tools
+  };
+  const nonConversationTokens =
+    fixedCategories.systemPrompt +
+    fixedCategories.claudeMd +
+    fixedCategories.memory +
+    fixedCategories.tools;
+  const conversation = Math.max(0, totalTokens - nonConversationTokens);
+
+  return createBreakdown(
+    source,
+    {
+      ...fixedCategories,
+      conversation
+    },
+    measuredAtMs,
+    nonConversationTokens > totalTokens ||
+      (conversation === 0 && totalTokens >= MIN_TOKENS_FOR_DRIFT_WARNING)
+  );
 }
 
 export async function countClaudeMdTokens(
@@ -308,7 +344,7 @@ export function replayDeferredTools(jsonl: string): ReadonlySet<string> {
   const activeTools = new Set<string>();
 
   for (const lineText of jsonl.split(/\r?\n/)) {
-    applyDeferredToolsDeltaLine(activeTools, lineText);
+    consumeDeferredToolLine(activeTools, lineText);
   }
 
   return activeTools;
@@ -335,13 +371,12 @@ async function getCacheKey(
 ): Promise<string> {
   const parts = [
     source.sessionPath,
-    source.totalTokens,
+    getTotalTokenBucket(source.totalTokens),
     source.effectiveWindow,
     source.contextWindow,
-    source.fillPercent,
     workspaceRoot,
     homeDir,
-    ...(await getSessionPathFingerprint(source.sessionPath, now)),
+    await getSessionToolFingerprint(source.sessionPath, now),
     ...(await getClaudeMdFingerprint(workspaceRoot, homeDir, now)),
     ...(await getMemoryFingerprint(source.sessionPath, now))
   ];
@@ -349,15 +384,29 @@ async function getCacheKey(
   return parts.join(CACHE_KEY_SEPARATOR);
 }
 
-async function getSessionPathFingerprint(
-  sessionPath: string | undefined,
-  now: number
-): Promise<readonly string[]> {
-  if (sessionPath === undefined) {
-    return [];
+function getTotalTokenBucket(totalTokens: number | undefined): number | undefined {
+  if (totalTokens === undefined) {
+    return undefined;
   }
 
-  return [await fingerprintPath(sessionPath, now)];
+  return Math.floor(totalTokens / BREAKDOWN_TOTAL_TOKEN_BUCKET_SIZE) * BREAKDOWN_TOTAL_TOKEN_BUCKET_SIZE;
+}
+
+async function getSessionToolFingerprint(
+  sessionPath: string | undefined,
+  now: number
+): Promise<string> {
+  if (sessionPath === undefined) {
+    return 'no-session';
+  }
+
+  const activeTools = await readDeferredToolsFromSession(sessionPath, now);
+
+  if (activeTools === undefined) {
+    return `${path.resolve(sessionPath)}:missing`;
+  }
+
+  return Array.from(activeTools).sort().join('\n');
 }
 
 async function getClaudeMdFingerprint(
@@ -650,47 +699,173 @@ async function readDeferredToolsFromSession(
   now: number
 ): Promise<ReadonlySet<string> | undefined> {
   const resolvedPath = path.resolve(sessionPath);
-  const fingerprint = await fingerprintPath(sessionPath, now);
   const cached = toolSetCache.get(resolvedPath);
-
-  if (cached !== undefined && cached.fingerprint === fingerprint) {
-    return cached.tools;
-  }
-
-  if (cached !== undefined) {
-    toolSetCache.delete(resolvedPath);
-  }
-
-  const activeTools = new Set<string>();
+  let stats: import('fs').Stats;
 
   try {
-    const stream = createReadStream(sessionPath, { encoding: 'utf8' });
-    const rl = createInterface({
-      input: stream,
-      crlfDelay: Infinity
-    });
-
-    try {
-      for await (const lineText of rl) {
-        applyDeferredToolsDeltaLine(activeTools, lineText);
-      }
-    } finally {
-      rl.close();
-    }
+    stats = await fsp.stat(sessionPath);
+    missingFingerprintCache.delete(resolvedPath);
   } catch {
+    missingFingerprintCache.set(resolvedPath, {
+      fingerprint: `${resolvedPath}:missing`,
+      expiresAt: now + CLAUDE_MD_MISSING_FINGERPRINT_TTL_MS
+    });
+    toolSetCache.delete(resolvedPath);
     return undefined;
   }
 
-  toolSetCache.set(resolvedPath, {
-    fingerprint,
-    tools: activeTools
-  });
+  if (cached !== undefined && stats.size === cached.offset && stats.mtimeMs === cached.mtimeMs) {
+    return cached.tools;
+  }
+
+  const canReadAppendedBytes =
+    cached !== undefined &&
+    stats.size > cached.offset &&
+    await fileSuffixMatches(sessionPath, cached.offset, cached.suffix);
+  // Re-read from the beginning after truncation, same-size rewrite, or append
+  // where the cached suffix no longer matches the file prefix.
+  const truncated =
+    cached !== undefined &&
+    (stats.size < cached.offset ||
+      (stats.size === cached.offset && stats.mtimeMs !== cached.mtimeMs) ||
+      (stats.size > cached.offset && !canReadAppendedBytes));
+  const offset = cached === undefined || truncated ? 0 : cached.offset;
+  const activeTools = new Set(cached === undefined || truncated ? [] : cached.tools);
+  const previousRemainder = cached === undefined || truncated ? '' : cached.remainder;
+  const previousSuffix = cached === undefined || truncated ? Buffer.alloc(0) : cached.suffix;
+
+  try {
+    const { remainder, bytesRead, suffix } = await readDeferredToolDeltaBytes(
+      sessionPath,
+      offset,
+      stats.size - offset,
+      previousRemainder,
+      previousSuffix,
+      activeTools
+    );
+
+    toolSetCache.set(resolvedPath, {
+      mtimeMs: stats.mtimeMs,
+      offset: offset + bytesRead,
+      remainder,
+      suffix,
+      tools: activeTools
+    });
+  } catch {
+    toolSetCache.delete(resolvedPath);
+    return undefined;
+  }
+
   return activeTools;
 }
 
-function applyDeferredToolsDeltaLine(activeTools: Set<string>, lineText: string): void {
+async function fileSuffixMatches(
+  filePath: string,
+  offset: number,
+  expectedSuffix: Buffer
+): Promise<boolean> {
+  if (expectedSuffix.length === 0) {
+    return true;
+  }
+
+  const suffixStart = offset - expectedSuffix.length;
+
+  if (suffixStart < 0) {
+    return false;
+  }
+
+  let handle: Awaited<ReturnType<typeof fsp.open>> | undefined;
+
+  try {
+    handle = await fsp.open(filePath, 'r');
+    const buffer = Buffer.alloc(expectedSuffix.length);
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      expectedSuffix.length,
+      suffixStart
+    );
+
+    return bytesRead === expectedSuffix.length && buffer.equals(expectedSuffix);
+  } catch {
+    return false;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function readDeferredToolDeltaBytes(
+  filePath: string,
+  offset: number,
+  length: number,
+  previousRemainder: string,
+  previousSuffix: Buffer,
+  activeTools: Set<string>
+): Promise<{ readonly remainder: string; readonly bytesRead: number; readonly suffix: Buffer }> {
+  if (length <= 0) {
+    return {
+      remainder: previousRemainder,
+      bytesRead: 0,
+      suffix: previousSuffix
+    };
+  }
+
+  const handle = await fsp.open(filePath, 'r');
+
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, offset);
+    const chunk = buffer.subarray(0, bytesRead);
+    const remainder = consumeDeferredToolChunk(
+      previousRemainder,
+      chunk.toString('utf8'),
+      activeTools
+    );
+    const suffix = getUpdatedToolCacheSuffix(previousSuffix, chunk);
+
+    return { remainder, bytesRead, suffix };
+  } finally {
+    await handle.close();
+  }
+}
+
+function getUpdatedToolCacheSuffix(previousSuffix: Buffer, chunk: Buffer): Buffer {
+  const combined =
+    previousSuffix.length === 0 ? chunk : Buffer.concat([previousSuffix, chunk]);
+
+  return combined.subarray(Math.max(0, combined.length - TOOL_CACHE_SUFFIX_BYTES));
+}
+
+function consumeDeferredToolChunk(
+  previousRemainder: string,
+  chunk: string,
+  activeTools: Set<string>
+): string {
+  const combined = `${previousRemainder}${chunk}`;
+  const complete = combined.endsWith('\n');
+  const lines = combined.split(/\r?\n/);
+  const completeLines = complete ? lines : lines.slice(0, -1);
+  const remainder = complete ? '' : lines.at(-1) ?? '';
+
+  for (const lineText of completeLines) {
+    consumeDeferredToolLine(activeTools, lineText);
+  }
+
+  if (!complete && remainder.trim() !== '' && consumeDeferredToolLine(activeTools, remainder) === 'toolDelta') {
+    return '';
+  }
+
+  return remainder;
+}
+
+type DeferredToolLineResult = 'complete' | 'incomplete' | 'toolDelta';
+
+function consumeDeferredToolLine(
+  activeTools: Set<string>,
+  lineText: string
+): DeferredToolLineResult {
   if (lineText.trim() === '') {
-    return;
+    return 'complete';
   }
 
   let line: unknown;
@@ -698,15 +873,15 @@ function applyDeferredToolsDeltaLine(activeTools: Set<string>, lineText: string)
   try {
     line = JSON.parse(lineText) as unknown;
   } catch {
-    return;
+    return 'incomplete';
   }
 
   if (isRecord(line) && line.isSidechain === true) {
-    return;
+    return 'complete';
   }
 
   if (!isDeferredToolsDelta(line)) {
-    return;
+    return 'complete';
   }
 
   for (const name of getStringArray(line.attachment.addedNames)) {
@@ -720,6 +895,8 @@ function applyDeferredToolsDeltaLine(activeTools: Set<string>, lineText: string)
   for (const name of getStringArray(line.attachment.readdedNames)) {
     activeTools.add(name);
   }
+
+  return 'toolDelta';
 }
 
 function maybePruneExpiredContextBreakdownCache(now: number): void {
