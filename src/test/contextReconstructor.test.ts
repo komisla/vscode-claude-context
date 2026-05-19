@@ -428,6 +428,53 @@ test('replays deferred tool deltas and counts MCP tools separately', async () =>
   }
 });
 
+test('estimateToolTokens caches deferred tool sets by session fingerprint', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-context-tools-cache-'));
+  clearAllContextCaches();
+
+  try {
+    const sessionPath = path.join(root, 'session.jsonl');
+    const firstDelta = `${makeToolDelta(['LongToolName'])}\n`;
+    const secondDelta = `${makeToolDelta(['mcp__x__tool'])}\n`;
+    const mutableFsPromises = fsPromises as {
+      stat: (...args: unknown[]) => Promise<unknown>;
+    };
+    const originalStat = mutableFsPromises.stat;
+
+    assert.equal(Buffer.byteLength(firstDelta), Buffer.byteLength(secondDelta));
+
+    await writeFile(sessionPath, firstDelta);
+    const originalStats = await originalStat(sessionPath);
+
+    mutableFsPromises.stat = async (...args: unknown[]) => {
+      const [filePath] = args;
+
+      if (filePath === sessionPath) {
+        return originalStats;
+      }
+
+      return originalStat(...args);
+    };
+
+    try {
+      assert.equal(await estimateToolTokens(sessionPath, 1_000), TOKENS_PER_BUILTIN_TOOL);
+
+      await writeFile(sessionPath, secondDelta);
+
+      assert.equal(await estimateToolTokens(sessionPath, 2_000), TOKENS_PER_BUILTIN_TOOL);
+
+      clearAllContextCaches();
+
+      assert.equal(await estimateToolTokens(sessionPath, 3_000), TOKENS_PER_MCP_TOOL);
+    } finally {
+      mutableFsPromises.stat = originalStat;
+    }
+  } finally {
+    clearAllContextCaches();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('reconstructor warns when fixed categories exceed total tokens', async () => {
   clearAllContextCaches();
 

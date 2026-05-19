@@ -61,6 +61,11 @@ interface CachedTextFile {
   readonly tokenCount: number;
 }
 
+interface CachedToolSet {
+  readonly fingerprint: string;
+  readonly tools: ReadonlySet<string>;
+}
+
 interface MissingFingerprintEntry {
   readonly fingerprint: string;
   readonly expiresAt: number;
@@ -69,6 +74,7 @@ interface MissingFingerprintEntry {
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<ContextBreakdown>>();
 const textFileCache = new Map<string, CachedTextFile>();
+const toolSetCache = new Map<string, CachedToolSet>();
 const claudeMdPathTreeCache = new Map<string, readonly string[]>();
 const missingFingerprintCache = new Map<string, MissingFingerprintEntry>();
 let lastContextBreakdownPruneAt = 0;
@@ -81,6 +87,7 @@ export function clearAllContextCaches(): void {
   cache.clear();
   inFlight.clear();
   textFileCache.clear();
+  toolSetCache.clear();
   claudeMdPathTreeCache.clear();
   missingFingerprintCache.clear();
   lastContextBreakdownPruneAt = 0;
@@ -130,7 +137,7 @@ export async function reconstructContextBreakdown(
     const systemPrompt = CC_BASE_SYSTEM_PROMPT_TOKENS;
     const claudeMd = await countClaudeMdTokens(options.workspaceRoot, homeDir, now);
     const memory = await countMemoryTokens(source.sessionPath, now);
-    const tools = await estimateToolTokens(source.sessionPath);
+    const tools = await estimateToolTokens(source.sessionPath, now);
     const nonConversationTokens = systemPrompt + claudeMd + memory + tools;
     const conversation = Math.max(0, totalTokens - nonConversationTokens);
     const systemPromptDriftWarning =
@@ -277,12 +284,12 @@ export async function countMemoryTokens(
   return total;
 }
 
-export async function estimateToolTokens(sessionPath: string | undefined): Promise<number> {
+export async function estimateToolTokens(sessionPath: string | undefined, now = Date.now()): Promise<number> {
   if (sessionPath === undefined) {
     return 0;
   }
 
-  const activeTools = await readDeferredToolsFromSession(sessionPath);
+  const activeTools = await readDeferredToolsFromSession(sessionPath, now);
 
   if (activeTools === undefined) {
     return 0;
@@ -640,8 +647,21 @@ async function readCachedTextFile(
 }
 
 async function readDeferredToolsFromSession(
-  sessionPath: string
+  sessionPath: string,
+  now: number
 ): Promise<ReadonlySet<string> | undefined> {
+  const resolvedPath = path.resolve(sessionPath);
+  const fingerprint = await fingerprintPath(sessionPath, now);
+  const cached = toolSetCache.get(resolvedPath);
+
+  if (cached !== undefined && cached.fingerprint === fingerprint) {
+    return cached.tools;
+  }
+
+  if (cached !== undefined) {
+    toolSetCache.delete(resolvedPath);
+  }
+
   const activeTools = new Set<string>();
 
   try {
@@ -662,6 +682,10 @@ async function readDeferredToolsFromSession(
     return undefined;
   }
 
+  toolSetCache.set(resolvedPath, {
+    fingerprint,
+    tools: activeTools
+  });
   return activeTools;
 }
 

@@ -410,6 +410,32 @@ test('historical reader deduplicates concurrent refresh work', async () => {
   assert.strictEqual(firstSnapshot, secondSnapshot);
 });
 
+test('historical reader refreshes jsonl files concurrently', async () => {
+  const reader = new HistoricalUsageReader(path.join(tmpdir(), 'claude-history-parallel-root'));
+  const mutable = reader as unknown as {
+    findJsonlFiles: (dir: string) => Promise<string[]>;
+    refreshFile: (jsonlPath: string, nowMs: number) => Promise<void>;
+  };
+  const paths = [
+    path.join(tmpdir(), 'first-session.jsonl'),
+    path.join(tmpdir(), 'second-session.jsonl')
+  ];
+  let activeRefreshes = 0;
+  let maxActiveRefreshes = 0;
+
+  mutable.findJsonlFiles = async () => paths;
+  mutable.refreshFile = async () => {
+    activeRefreshes += 1;
+    maxActiveRefreshes = Math.max(maxActiveRefreshes, activeRefreshes);
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+    activeRefreshes -= 1;
+  };
+
+  await reader.refresh(NOW);
+
+  assert.equal(maxActiveRefreshes, 2);
+});
+
 test('historical reader prunes stale directory cache entries on refresh', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-history-dir-cache-'));
 
