@@ -189,6 +189,11 @@ export function parseContextUpdateFromLine(
   const usage = line.message.usage;
   warnInvalidUsageOnce(usage, sessionPath);
   const totalTokens = getContextFillTokens(usage);
+
+  if (totalTokens === 0) {
+    return undefined;
+  }
+
   const model = normalizeModel(line.message);
   const { fillPercent, contextWindow, effectiveWindow } = calculateFillPercent(totalTokens, model);
 

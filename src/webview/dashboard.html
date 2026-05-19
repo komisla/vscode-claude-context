@@ -277,17 +277,35 @@
       <section class="panel" aria-labelledby="context-title">
         <div class="panel-header">
           <h2 id="context-title">Context Window</h2>
-          <strong id="fill-value">0%</strong>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <strong id="fill-value">0%</strong>
+            <button id="reload-btn" type="button" title="Reload context data" style="padding: 2px 8px; font-size: 12px;">↻</button>
+          </div>
         </div>
         <div
           class="bar large"
           role="progressbar"
-          aria-label="Context fill"
+          aria-label="Usable window fill"
           aria-valuemin="0"
           aria-valuemax="100"
           aria-valuenow="0"
         >
           <div id="fill-bar" class="bar-fill good"></div>
+        </div>
+        <p id="fill-label" class="muted hidden" style="font-size: 12px; margin: 2px 0 0;">Usable window fill</p>
+        <div id="total-fill-section" class="hidden" style="margin-top: 6px;">
+          <div
+            class="bar"
+            role="progressbar"
+            aria-label="Total window fill"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            id="total-fill-progress"
+          >
+            <div id="total-fill-bar" class="bar-fill"></div>
+          </div>
+          <p id="total-fill-label" class="muted" style="font-size: 12px; margin: 2px 0 0;"></p>
         </div>
         <p id="threshold-message" class="notice hidden"></p>
 
@@ -338,6 +356,23 @@
           <button id="enable-history" type="button">Enable</button>
           <span class="muted">Sends one request to api.anthropic.com every 5 min.</span>
         </div>
+      </section>
+
+      <section class="panel" aria-label="Settings">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600;">
+          <input type="checkbox" id="show-total-fill" style="cursor: pointer;" />
+          Show total window fill (e.g. ctx 47% (42%))
+        </label>
+        <p class="muted" style="margin: 6px 0 0; font-size: 12px;">
+          Shows fill of the raw 200k model window alongside the usable fill in status bar and panel. Usable = 200k minus output reserve.
+        </p>
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; margin-top: 12px;">
+          <input type="checkbox" id="show-historical-usage" style="cursor: pointer;" />
+          Show plan utilization (5h / 7d)
+        </label>
+        <p class="muted" style="margin: 6px 0 0; font-size: 12px;">
+          When enabled, the extension sends one POST request to api.anthropic.com every 5 minutes to fetch rate-limit headers. This counts against API usage.
+        </p>
       </section>
 
       <details>
@@ -414,6 +449,14 @@
       const historyList = document.getElementById('history-list');
       const modelTitle = document.getElementById('model-title');
       const modelList = document.getElementById('model-list');
+      const showHistoricalUsageCheckbox = document.getElementById('show-historical-usage');
+      const reloadBtn = document.getElementById('reload-btn');
+      const fillLabel = document.getElementById('fill-label');
+      const totalFillSection = document.getElementById('total-fill-section');
+      const totalFillBar = document.getElementById('total-fill-bar');
+      const totalFillProgress = document.getElementById('total-fill-progress');
+      const totalFillLabel = document.getElementById('total-fill-label');
+      const showTotalFillCheckbox = document.getElementById('show-total-fill');
 
       copyCompact.addEventListener('click', () => {
         vscode.postMessage({ type: 'copyCompact' });
@@ -425,7 +468,21 @@
       });
 
       enableHistory.addEventListener('click', () => {
-        vscode.postMessage({ type: 'enableHistoricalUsage' });
+        vscode.postMessage({ type: 'toggleHistoricalUsage', value: true });
+      });
+
+      showHistoricalUsageCheckbox.addEventListener('change', () => {
+        vscode.postMessage({ type: 'toggleHistoricalUsage', value: showHistoricalUsageCheckbox.checked });
+      });
+
+      reloadBtn.addEventListener('click', () => {
+        reloadBtn.textContent = '↻…';
+        reloadBtn.disabled = true;
+        vscode.postMessage({ type: 'reload' });
+      });
+
+      showTotalFillCheckbox.addEventListener('change', () => {
+        vscode.postMessage({ type: 'toggleTotalFill', value: showTotalFillCheckbox.checked });
       });
 
       window.addEventListener('message', (event) => {
@@ -467,11 +524,22 @@
         emptyState.classList.remove('danger');
         emptyState.classList.remove('loading');
         dashboard.classList.remove('hidden');
-        renderContext(breakdown);
+        renderContext(breakdown, snapshot.showTotalFill);
         renderHistory(snapshot.showHistoricalUsage, snapshot.rateLimit, snapshot.history);
+
+        if (typeof snapshot.showHistoricalUsage === 'boolean') {
+          showHistoricalUsageCheckbox.checked = snapshot.showHistoricalUsage;
+        }
+
+        if (typeof snapshot.showTotalFill === 'boolean') {
+          showTotalFillCheckbox.checked = snapshot.showTotalFill;
+        }
+
+        reloadBtn.textContent = snapshot.isRefreshing ? '↻…' : '↻';
+        reloadBtn.disabled = !!snapshot.isRefreshing;
       }
 
-      function renderContext(breakdown) {
+      function renderContext(breakdown, showTotalFill) {
         const fillPercent = clampPercent(breakdown.fillPercent);
         const state = getThresholdState(fillPercent);
 
@@ -483,16 +551,23 @@
         renderCategories(breakdown);
         renderDriftWarning(breakdown);
 
-        const rawPct =
-          breakdown.contextWindow && breakdown.contextWindow > 0
-            ? ` · ${Math.round((breakdown.totalTokens / breakdown.contextWindow) * 100)}% of ${formatTokens(
-                breakdown.contextWindow
-              )} total`
-            : '';
         totalLine.textContent = `Total: ${formatTokens(breakdown.totalTokens)} / ${formatTokens(
           breakdown.effectiveWindow
-        )} usable tokens (${Math.round(fillPercent)}%)${rawPct}`;
+        )} usable tokens (${Math.round(fillPercent)}%)`;
         actions.classList.toggle('hidden', fillPercent < 60);
+
+        // Dual fill bars
+        const hasTotalBar = showTotalFill && breakdown.contextWindow && breakdown.contextWindow > 0;
+        fillLabel.classList.toggle('hidden', !hasTotalBar);
+        totalFillSection.classList.toggle('hidden', !hasTotalBar);
+
+        if (hasTotalBar) {
+          const totalPct = clampPercent((breakdown.totalTokens / breakdown.contextWindow) * 100);
+          totalFillBar.style.width = `${totalPct}%`;
+          totalFillBar.className = `bar-fill ${getThresholdState(totalPct)}`;
+          totalFillProgress.setAttribute('aria-valuenow', String(Math.round(totalPct)));
+          totalFillLabel.textContent = `Total window fill — ${Math.round(totalPct)}% of ${formatTokens(breakdown.contextWindow)} raw window`;
+        }
       }
 
       function renderThresholdMessage(fillPercent) {

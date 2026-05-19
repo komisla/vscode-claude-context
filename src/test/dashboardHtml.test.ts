@@ -65,12 +65,11 @@ test('dashboard declares a strict CSP with a script nonce placeholder', async ()
   assert.equal(html.includes("script-src 'unsafe-inline'"), false);
 });
 
-test('dashboard total line includes usable and raw context-window fill', async () => {
+test('dashboard total line shows usable fill and raw bar is driven by showTotalFill', async () => {
   const html = await readDashboardHtml();
 
-  assert.match(html, /const rawPct =/);
-  assert.match(html, /breakdown\.contextWindow && breakdown\.contextWindow > 0/);
+  assert.match(html, /usable tokens \(\$\{Math\.round\(fillPercent\)\}%\)/);
   assert.match(html, /breakdown\.totalTokens \/ breakdown\.contextWindow/);
-  assert.match(html, /usable tokens \(\$\{Math\.round\(fillPercent\)\}%\)\$\{rawPct\}/);
+  assert.match(html, /total-fill-section/);
   assert.equal(html.includes('effective tokens'), false);
 });

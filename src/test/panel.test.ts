@@ -426,7 +426,7 @@ test('BreakdownPanel lets the webview opt into historical usage', async () => {
     assert.equal(beforeEnable.payload.rateLimit, undefined);
     assert.equal(refreshCalls, 0);
 
-    mockPanel.webview.receiveMessage({ type: 'enableHistoricalUsage' });
+    mockPanel.webview.receiveMessage({ type: 'toggleHistoricalUsage', value: true });
     await waitFor(() => refreshCalls === 1);
 
     assert.equal(
@@ -483,16 +483,18 @@ test('BreakdownPanel ignores stale usage snapshots after a newer context post', 
       fillPercent: 65
     });
 
-    await waitFor(() => mockPanel.postedMessages.length === 2 && rateLimitCalls === 2);
+    // fire() triggers a second postSnapshot which first sends the cached lastPayload
+    // (isRefreshing: true) and then the fresh result — so +2 messages, not +1.
+    await waitFor(() => mockPanel.postedMessages.length === 3 && rateLimitCalls === 2);
 
     firstRateLimit.resolve(makeRateLimitSnapshot(20, 30));
     await flush();
-    assert.equal(mockPanel.postedMessages.length, 2);
+    assert.equal(mockPanel.postedMessages.length, 3);
 
     secondRateLimit.resolve(makeRateLimitSnapshot(70, 80));
-    await waitFor(() => mockPanel.postedMessages.length === 3);
+    await waitFor(() => mockPanel.postedMessages.length === 4);
 
-    const lastMessage = mockPanel.postedMessages[2] as {
+    const lastMessage = mockPanel.postedMessages[3] as {
       readonly payload: { readonly rateLimit?: { readonly pct5h: number; readonly pct7d: number } };
     };
     assert.equal(lastMessage.payload.rateLimit?.pct5h, 70);

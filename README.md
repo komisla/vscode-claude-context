@@ -4,7 +4,11 @@ Live view of your Claude Code context window — right in the VS Code status bar
 
 Claude Context Monitor adds a traffic-light status bar item that shows how full the current Claude Code context window is, plus a breakdown panel that explains *what* is consuming those tokens (system prompt, tools, memory, conversation). All context data is read locally from Claude Code's session files — no network calls.
 
-<!-- screenshot -->
+| Green (< 40%) | Yellow (40–60%) | Red (≥ 60%) |
+|:---:|:---:|:---:|
+| ![Green status bar](assets/statusbar-green.png) | ![Yellow status bar](assets/statusbar-yellow.png) | ![Red status bar](assets/statusbar-red.png) |
+
+![Breakdown panel](assets/panel.png)
 
 ## Features
 
@@ -37,11 +41,12 @@ The extension tails Claude Code's JSONL session files in `~/.claude/projects/`. 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `claudeContext.hideBelow` | number | `0` | Hide the status bar item when fill % is below this value. `0` keeps it always visible. |
-| `claudeContext.showHistoricalUsage` | boolean | `false` | Enable plan utilization (5h / 7d) in the status bar and panel. |
+| `claudeContext.showHistoricalUsage` | boolean | `true` | Show plan utilization (5h / 7d) in the status bar and panel. Toggle also available via checkbox in the breakdown panel. |
+| `claudeContext.showTotalFill` | boolean | `false` | Show total window fill % in parentheses in the status bar, e.g. `ctx 47% (42%)`. Also shows a second bar in the panel. Toggle in the breakdown panel. |
 
 ### Note on `showHistoricalUsage`
 
-This option is **opt-in**. When enabled, the extension sends one `POST` request to `api.anthropic.com` every 5 minutes using your stored Claude OAuth token to fetch your rate-limit utilization. These requests count against your Claude API usage. Leave the setting off if you don't want the extension to make any network calls.
+This option is **on by default**. When enabled, the extension sends one `POST` request to `api.anthropic.com` every 5 minutes using your stored Claude OAuth token to fetch your rate-limit utilization. These requests count against your Claude API usage. Disable it in VS Code Settings or via the checkbox at the bottom of the breakdown panel if you don't want the extension to make any network calls.
 
 ## Requirements
 
