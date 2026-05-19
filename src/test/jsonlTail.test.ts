@@ -869,7 +869,8 @@ test('JsonlTailDataSource does not emit zero-token updates after a session reset
       fixture.sessionPath
     );
 
-    // Zero-token lines are filtered out — no new update should fire.
+    // Zero-token lines are filtered out — no update fires, so the panel retains
+    // the previous session's snapshot until the first non-zero line arrives.
     assert.equal(extraUpdateCount, 0);
   } finally {
     dataSource.dispose();

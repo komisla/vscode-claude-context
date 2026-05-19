@@ -380,14 +380,20 @@ function getNonce(): string {
 }
 
 function isWebviewCommand(value: unknown): value is WebviewCommand {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.type === 'toggleHistoricalUsage' ||
+    value.type === 'toggleTotalFill'
+  ) {
+    return typeof value.value === 'boolean';
+  }
   return (
-    isRecord(value) &&
-    (value.type === 'copyCompact' ||
-      value.type === 'startNewChat' ||
-      value.type === 'toggleHistoricalUsage' ||
-      value.type === 'reload' ||
-      value.type === 'toggleTotalFill' ||
-      value.type === 'ready')
+    value.type === 'copyCompact' ||
+    value.type === 'startNewChat' ||
+    value.type === 'reload' ||
+    value.type === 'ready'
   );
 }
 
