@@ -275,10 +275,12 @@ export class JsonlTailDataSource implements ContextDataSource {
 
     if (this.refreshTimer !== undefined) {
       clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
     }
 
     if (this.tickTimer !== undefined) {
       clearTimeout(this.tickTimer);
+      this.tickTimer = undefined;
     }
 
     this.clearActiveSessionPolling();

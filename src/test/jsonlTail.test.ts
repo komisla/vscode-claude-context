@@ -666,6 +666,22 @@ test('JsonlTailDataSource clears Claude root watcher retry timer on dispose', as
   }
 });
 
+test('JsonlTailDataSource clears refresh and tick timer refs on dispose', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  const mutable = dataSource as unknown as {
+    refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    tickTimer: ReturnType<typeof setTimeout> | undefined;
+  };
+
+  mutable.refreshTimer = setTimeout(() => undefined, 60_000);
+  mutable.tickTimer = setTimeout(() => undefined, 60_000);
+
+  dataSource.dispose();
+
+  assert.equal(mutable.refreshTimer, undefined);
+  assert.equal(mutable.tickTimer, undefined);
+});
+
 test('JsonlTailDataSource ide watcher errors only clear the ide watcher', async () => {
   const fixture = await createClaudeFixture('claude-jsonl-tail-ide-error-');
   const originalEnv = snapshotProcessEnv();

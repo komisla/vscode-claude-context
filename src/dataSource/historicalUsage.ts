@@ -202,9 +202,7 @@ export class HistoricalUsageReader {
       }
     }
 
-    for (const jsonlPath of jsonlPaths) {
-      await this.refreshFile(jsonlPath, nowMs);
-    }
+    await Promise.all(jsonlPaths.map((jsonlPath) => this.refreshFile(jsonlPath, nowMs)));
 
     return this.calculateSnapshot(nowMs);
   }
