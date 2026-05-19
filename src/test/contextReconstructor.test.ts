@@ -434,14 +434,18 @@ test('estimateToolTokens caches deferred tool sets by session fingerprint', asyn
 
   try {
     const sessionPath = path.join(root, 'session.jsonl');
-    const firstDelta = `${makeToolDelta(['LongToolName'])}\n`;
-    const secondDelta = `${makeToolDelta(['mcp__x__tool'])}\n`;
+    const firstDeltaLine = makeToolDelta(['LongToolName']);
+    const secondDeltaLine = makeToolDelta(['mcp__x__tool']);
+    const paddedLength = Math.max(
+      Buffer.byteLength(firstDeltaLine),
+      Buffer.byteLength(secondDeltaLine)
+    );
+    const firstDelta = padJsonlLineToByteLength(firstDeltaLine, paddedLength);
+    const secondDelta = padJsonlLineToByteLength(secondDeltaLine, paddedLength);
     const mutableFsPromises = fsPromises as {
       stat: (...args: unknown[]) => Promise<unknown>;
     };
     const originalStat = mutableFsPromises.stat;
-
-    assert.equal(Buffer.byteLength(firstDelta), Buffer.byteLength(secondDelta));
 
     await writeFile(sessionPath, firstDelta);
     const originalStats = await originalStat(sessionPath);
@@ -1237,6 +1241,14 @@ function makeToolDelta(addedNames: readonly string[]): string {
       addedNames
     }
   });
+}
+
+function padJsonlLineToByteLength(lineText: string, byteLength: number): string {
+  const paddingBytes = byteLength - Buffer.byteLength(lineText);
+
+  assert.ok(paddingBytes >= 0);
+
+  return `${lineText}${' '.repeat(paddingBytes)}\n`;
 }
 
 function flipWindowsDriveLetterCase(filePath: string): string {
