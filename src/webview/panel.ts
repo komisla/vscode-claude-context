@@ -151,12 +151,12 @@ export class BreakdownPanel implements vscode.Disposable {
 
   private async postSnapshot(source: ContextDataSource): Promise<void> {
     const panel = this.panel;
-    const sequence = ++this.postSequence;
 
-    if (!panel) {
+    if (panel === undefined) {
       return;
     }
 
+    const sequence = ++this.postSequence;
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const latest = source.getLatest();
     const breakdown = await reconstructContextBreakdown(latest, { workspaceRoot });
@@ -171,6 +171,10 @@ export class BreakdownPanel implements vscode.Disposable {
       showHistoricalUsage,
       error: latest.error
     });
+
+    if (this.panel !== panel || sequence !== this.postSequence) {
+      return;
+    }
 
     void Promise.all([this.readRateLimit(), this.readHistoricalUsage()]).then(
       async ([rateLimit, history]) => {
