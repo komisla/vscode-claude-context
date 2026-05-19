@@ -66,4 +66,4 @@ Source code, issue tracker and changelog: <https://github.com/komisla/vscode-cla
 
 ## Related
 
-- [long-kudo/vscode-claude-status](https://github.com/long-910/vscode-claude-status) — tracks historical **cost** (dollar amounts) from Claude Code logs. Claude Context Monitor instead shows the **live context state**: what is consuming tokens in the current session, right now.
+- [long-kudo/vscode-claude-status](https://github.com/long-910/vscode-claude-status) — tracks historical **cost** (dollar amounts) from Claude Code logs. Claude Context Monitor instead shows the **live context breakdown**: which category (system prompt, tools, memory, conversation) is consuming tokens right now.

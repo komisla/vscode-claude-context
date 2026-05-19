@@ -5,7 +5,7 @@ traffic-light status bar item + breakdown panel (tokens by category: system prom
 Includes a usage trend (5h/7d token budget %) as supporting context for the live fill indicator.
 
 Differentiation from `long-kudo/vscode-claude-status`: that extension tracks historical **costs** (dollar amounts) from JSONL logs.
-This extension shows the **live context state** — what is consuming tokens right now — plus token-budget trend as a % (not dollars, not a log view).
+This extension shows the **live context breakdown** — which category (system prompt, tools, memory, conversation) is consuming tokens right now. The 5h/7d plan utilization trend is a shared feature, not a differentiator.
 
 **CLAUDE.md size rule:** Keep ≤ ~120 lines. Sections > ~15 lines → extract to `docs/` + link here.
 
