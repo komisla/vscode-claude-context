@@ -17,6 +17,7 @@ import {
   estimateToolTokens,
   isDeferredToolsDelta,
   isMcpToolName,
+  extractAtImports,
   reconstructContextBreakdown,
   replayDeferredTools
 } from '../contextReconstructor';
@@ -212,6 +213,12 @@ test('bare @name.md references are ignored during CLAUDE.md import counting', as
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('ignores Unix absolute-path @ imports during CLAUDE.md import extraction', async () => {
+  const imports = extractAtImports('keep @./relative.md but ignore @/api/auth and @/issues/42');
+
+  assert.deepEqual(imports, ['./relative.md']);
 });
 
 test('ignores imports inside comments and code blocks during CLAUDE.md import counting', async () => {
