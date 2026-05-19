@@ -436,6 +436,31 @@ test('historical reader refreshes jsonl files concurrently', async () => {
   assert.equal(maxActiveRefreshes, 2);
 });
 
+test('historical reader keeps refreshing remaining files when one refresh rejects', async () => {
+  const reader = new HistoricalUsageReader(path.join(tmpdir(), 'claude-history-settled-root'));
+  const mutable = reader as unknown as {
+    findJsonlFiles: (dir: string) => Promise<string[]>;
+    refreshFile: (jsonlPath: string, nowMs: number) => Promise<void>;
+  };
+  const failedPath = path.join(tmpdir(), 'failed-session.jsonl');
+  const successfulPath = path.join(tmpdir(), 'successful-session.jsonl');
+  const refreshedPaths: string[] = [];
+
+  mutable.findJsonlFiles = async () => [failedPath, successfulPath];
+  mutable.refreshFile = async (jsonlPath) => {
+    refreshedPaths.push(jsonlPath);
+
+    if (jsonlPath === failedPath) {
+      throw new Error('unexpected refresh failure');
+    }
+  };
+
+  const snapshot = await reader.refresh(NOW);
+
+  assert.deepEqual(refreshedPaths.sort(), [failedPath, successfulPath].sort());
+  assert.equal(snapshot.hasData, false);
+});
+
 test('historical reader prunes stale directory cache entries on refresh', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-history-dir-cache-'));
 
