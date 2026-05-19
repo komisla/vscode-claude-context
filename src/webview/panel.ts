@@ -23,6 +23,9 @@ type WebviewCommand =
     }
   | {
       readonly type: 'enableHistoricalUsage';
+    }
+  | {
+      readonly type: 'ready';
     };
 
 interface WebviewModelUsage {
@@ -77,6 +80,7 @@ export class BreakdownPanel implements vscode.Disposable {
   private historyRefreshAt = 0;
   private historyRefreshing: Promise<HistoricalUsageSnapshot | undefined> | undefined;
   private postSequence = 0;
+  private lastPayload: WebviewSnapshotPayload | undefined;
 
   public constructor(
     private readonly extensionUri: vscode.Uri,
@@ -92,6 +96,7 @@ export class BreakdownPanel implements vscode.Disposable {
     this.panel?.dispose();
     this.panel = undefined;
     this.source = undefined;
+    this.lastPayload = undefined;
   }
 
   public open(source: ContextDataSource): void {
@@ -121,6 +126,7 @@ export class BreakdownPanel implements vscode.Disposable {
       panel.onDidDispose(() => {
         this.disposePanelSubscriptions();
         this.panel = undefined;
+        this.lastPayload = undefined;
       }),
       panel.webview.onDidReceiveMessage((message: unknown) => {
         if (!isWebviewCommand(message)) {
@@ -160,30 +166,28 @@ export class BreakdownPanel implements vscode.Disposable {
       return;
     }
 
-    await this.postWebviewMessage(panel, {
-      type: 'contextSnapshot',
-      payload: {
-        breakdown,
-        showHistoricalUsage,
-        error: latest.error
-      }
+    await this.postSnapshotPayload(panel, {
+      breakdown,
+      showHistoricalUsage,
+      error: latest.error
     });
 
     void Promise.all([this.readRateLimit(), this.readHistoricalUsage()]).then(
       async ([rateLimit, history]) => {
+        if (this.panel === undefined) {
+          return;
+        }
+
         if (this.panel !== panel || sequence !== this.postSequence) {
           return;
         }
 
-        await this.postWebviewMessage(panel, {
-          type: 'contextSnapshot',
-          payload: {
-            breakdown,
-            showHistoricalUsage,
-            rateLimit: rateLimit === undefined ? undefined : toWebviewRateLimit(rateLimit),
-            history: history === undefined ? undefined : toWebviewHistoricalUsage(history),
-            error: latest.error
-          }
+        await this.postSnapshotPayload(panel, {
+          breakdown,
+          showHistoricalUsage,
+          rateLimit: rateLimit === undefined ? undefined : toWebviewRateLimit(rateLimit),
+          history: history === undefined ? undefined : toWebviewHistoricalUsage(history),
+          error: latest.error
         });
       }
     );
@@ -283,11 +287,31 @@ export class BreakdownPanel implements vscode.Disposable {
         }
         return;
       }
+      case 'ready': {
+        if (this.lastPayload !== undefined) {
+          await this.postWebviewMessage(panel, {
+            type: 'contextSnapshot',
+            payload: this.lastPayload
+          });
+        }
+        return;
+      }
       default: {
         const exhaustiveCheck: never = message;
         return exhaustiveCheck;
       }
     }
+  }
+
+  private async postSnapshotPayload(
+    panel: vscode.WebviewPanel,
+    payload: WebviewSnapshotPayload
+  ): Promise<void> {
+    this.lastPayload = payload;
+    await this.postWebviewMessage(panel, {
+      type: 'contextSnapshot',
+      payload
+    });
   }
 
   private async postWebviewMessage(
@@ -315,7 +339,8 @@ function isWebviewCommand(value: unknown): value is WebviewCommand {
     isRecord(value) &&
     (value.type === 'copyCompact' ||
       value.type === 'startNewChat' ||
-      value.type === 'enableHistoricalUsage')
+      value.type === 'enableHistoricalUsage' ||
+      value.type === 'ready')
   );
 }
 

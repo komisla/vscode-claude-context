@@ -27,6 +27,7 @@ interface VscodeMock {
   readonly window: {
     readonly webviewPanels: Array<{
       readonly postedMessages: Array<{ readonly type: string; readonly payload?: unknown }>;
+      readonly revealCalls: unknown[];
       readonly webview: {
         receiveMessage(message: unknown): void;
       };
@@ -491,6 +492,130 @@ test('BreakdownPanel ignores stale usage snapshots after a newer context post', 
     };
     assert.equal(lastMessage.payload.rateLimit?.pct5h, 70);
     assert.equal(lastMessage.payload.rateLimit?.pct7d, 80);
+  } finally {
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
+test('BreakdownPanel resends the last snapshot when the webview reports ready', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: false
+  });
+
+  const historicalUsage = {
+    refresh: async () => makeHistorySnapshot()
+  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
+  panel.open(tracker.source);
+
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  try {
+    await waitFor(() => mockPanel.postedMessages.length >= 2);
+    const lastPayload = mockPanel.postedMessages.at(-1)?.payload;
+
+    mockPanel.webview.receiveMessage({ type: 'ready' });
+    await waitFor(() => mockPanel.postedMessages.length >= 3);
+
+    assert.deepEqual(mockPanel.postedMessages.at(-1)?.payload, lastPayload);
+  } finally {
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
+test('BreakdownPanel reveal-after-hide recovers the snapshot after webview ready', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: false
+  });
+
+  const historicalUsage = {
+    refresh: async () => makeHistorySnapshot()
+  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
+  panel.open(tracker.source);
+
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  try {
+    await waitFor(() => mockPanel.postedMessages.length >= 1);
+    mockPanel.postedMessages.length = 0;
+
+    panel.open(tracker.source);
+    assert.equal(mockPanel.revealCalls.length, 1);
+
+    mockPanel.postedMessages.length = 0;
+    mockPanel.webview.receiveMessage({ type: 'ready' });
+    await waitFor(() => mockPanel.postedMessages.length === 1);
+
+    const recoveredMessage = mockPanel.postedMessages[0] as {
+      readonly type: string;
+      readonly payload: { readonly breakdown?: { readonly fillPercent: number } };
+    };
+    assert.equal(recoveredMessage.type, 'contextSnapshot');
+    assert.equal(recoveredMessage.payload.breakdown?.fillPercent, 45);
+  } finally {
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
+test('BreakdownPanel skips usage snapshot continuation after dispose', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: true
+  });
+
+  const pendingHistory = deferred<HistoricalUsageSnapshot | undefined>();
+  const pendingRateLimit = deferred<RateLimitSnapshot | undefined>();
+  const historicalUsage = {
+    refresh: async () => pendingHistory.promise
+  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => pendingRateLimit.promise
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
+  panel.open(tracker.source);
+
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  try {
+    await waitFor(() => mockPanel.postedMessages.length === 1);
+
+    panel.dispose();
+    pendingRateLimit.resolve(makeRateLimitSnapshot());
+    pendingHistory.resolve(makeHistorySnapshot());
+    await flush();
+    await flush();
+
+    assert.equal(mockPanel.postedMessages.length, 1);
   } finally {
     tracker.source.dispose();
     panel.dispose();

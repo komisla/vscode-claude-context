@@ -598,6 +598,74 @@ test('JsonlTailDataSource claude root watcher errors only clear the root watcher
   }
 });
 
+test('JsonlTailDataSource retries Claude root watcher setup after the root appears', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-root-retry-'));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const originalEnv = snapshotProcessEnv();
+  const watchCalls: string[] = [];
+
+  applyClaudeHome(homeDir);
+  const fakeWatch = ((dir: string, listener: (event: string, filename: string | Buffer | null) => void) => {
+    void listener;
+    watchCalls.push(dir);
+    return new FakeWatcher(dir) as unknown as fs.FSWatcher;
+  }) as typeof fs.watch;
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([]), fakeWatch);
+
+  try {
+    await dataSource.whenIdle();
+
+    const mutable = dataSource as unknown as {
+      claudeRootWatcher: FakeWatcher | undefined;
+      claudeRootWatcherRetryTimer: ReturnType<typeof setTimeout> | undefined;
+    };
+
+    assert.equal(mutable.claudeRootWatcher, undefined);
+    assert.notEqual(mutable.claudeRootWatcherRetryTimer, undefined);
+
+    await mkdir(claudeRoot, { recursive: true });
+    fireScheduledTimeout(mutable.claudeRootWatcherRetryTimer);
+    await dataSource.whenIdle();
+
+    assert.ok(mutable.claudeRootWatcher !== undefined);
+    assert.ok(watchCalls.includes(claudeRoot));
+    assert.equal(mutable.claudeRootWatcherRetryTimer, undefined);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource clears Claude root watcher retry timer on dispose', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-root-retry-dispose-'));
+  const homeDir = path.join(root, 'home');
+  const originalEnv = snapshotProcessEnv();
+
+  applyClaudeHome(homeDir);
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+
+  try {
+    await dataSource.whenIdle();
+
+    const mutable = dataSource as unknown as {
+      claudeRootWatcherRetryTimer: ReturnType<typeof setTimeout> | undefined;
+    };
+
+    assert.notEqual(mutable.claudeRootWatcherRetryTimer, undefined);
+
+    dataSource.dispose();
+
+    assert.equal(mutable.claudeRootWatcherRetryTimer, undefined);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('JsonlTailDataSource ide watcher errors only clear the ide watcher', async () => {
   const fixture = await createClaudeFixture('claude-jsonl-tail-ide-error-');
   const originalEnv = snapshotProcessEnv();
@@ -636,6 +704,49 @@ test('JsonlTailDataSource ide watcher errors only clear the ide watcher', async 
     assert.equal(mutable.claudeRootWatcher, rootWatcher);
     assert.equal(mutable.ideWatcher, undefined);
     assert.deepEqual(scheduledRefreshes, [30_000]);
+  } finally {
+    dataSource?.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('JsonlTailDataSource schedules refresh for repeated project watcher errors', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-project-repeat-error-');
+  const originalEnv = snapshotProcessEnv();
+  const scheduledRefreshes: number[] = [];
+
+  applyClaudeHome(fixture.homeDir);
+  const fakeWatch = ((dir: string, listener: (event: string, filename: string | Buffer | null) => void) => {
+    void listener;
+    return new FakeWatcher(dir) as unknown as fs.FSWatcher;
+  }) as typeof fs.watch;
+
+  let dataSource: JsonlTailDataSource | undefined;
+
+  try {
+    dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]), fakeWatch);
+    const mutable = dataSource as unknown as {
+      projectWatcher: FakeWatcher | undefined;
+      watchProjectDir: (dir: string) => void;
+      scheduleRefresh: (delayMs: number) => void;
+    };
+
+    await delay(25);
+
+    mutable.scheduleRefresh = (delayMs: number) => {
+      scheduledRefreshes.push(delayMs);
+    };
+
+    mutable.watchProjectDir(fixture.projectRoot);
+    await delay(25);
+    mutable.projectWatcher?.emitError('project dir removed once');
+
+    mutable.watchProjectDir(fixture.projectRoot);
+    await delay(25);
+    mutable.projectWatcher?.emitError('project dir removed twice');
+
+    assert.deepEqual(scheduledRefreshes, [30_000, 30_000]);
   } finally {
     dataSource?.dispose();
     restoreProcessEnv(originalEnv);
@@ -1156,6 +1267,43 @@ test('whenIdle waits for refresh and poll work that overlap', async () => {
   }
 });
 
+test('dispose captures in-flight readNewBytes work for whenIdle', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+  let releaseRead: (() => void) | undefined;
+
+  try {
+    const mutable = dataSource as unknown as {
+      readNewBytesInFlight: Map<string, Promise<void>>;
+      pendingDispose?: Promise<void>;
+    };
+
+    let readSettled = false;
+    mutable.readNewBytesInFlight.set(
+      'session.jsonl',
+      new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      }).then(() => {
+        readSettled = true;
+      })
+    );
+
+    dataSource.dispose();
+
+    assert.equal(readSettled, false);
+    assert.notEqual(mutable.pendingDispose, undefined);
+
+    releaseRead?.();
+    await dataSource.whenIdle();
+
+    assert.equal(readSettled, true);
+  } finally {
+    releaseRead?.();
+    dataSource.dispose();
+    await dataSource.whenIdle();
+  }
+});
+
 test('whenIdle waits for watcher setup work', async () => {
   const dataSource = new JsonlTailDataSource(createMockVscode([]));
   await delay(25);
@@ -1381,6 +1529,20 @@ function restoreProcessEnv(originalEnv: typeof process.env): void {
   process.env.HOMEDRIVE = originalEnv.HOMEDRIVE;
   process.env.HOMEPATH = originalEnv.HOMEPATH;
   process.env.USERPROFILE = originalEnv.USERPROFILE;
+}
+
+function fireScheduledTimeout(timer: ReturnType<typeof setTimeout> | undefined): void {
+  if (timer === undefined) {
+    throw new Error('Expected scheduled timeout');
+  }
+
+  const mutableTimer = timer as unknown as {
+    _onTimeout?: () => void;
+  };
+  const callback = mutableTimer._onTimeout;
+
+  clearTimeout(timer);
+  callback?.();
 }
 
 async function createClaudeFixture(prefix: string): Promise<{

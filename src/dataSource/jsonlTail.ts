@@ -285,6 +285,7 @@ export class JsonlTailDataSource implements ContextDataSource {
 
     if (this.claudeRootWatcherRetryTimer !== undefined) {
       clearTimeout(this.claudeRootWatcherRetryTimer);
+      this.claudeRootWatcherRetryTimer = undefined;
     }
 
     // Capture in-flight work so any open file handles inside readNewBytes are
@@ -368,6 +369,7 @@ export class JsonlTailDataSource implements ContextDataSource {
       if (!this.disposed) {
         const message = err instanceof Error ? err.message : String(err);
         globalThis.console.warn('[vscode-claude-context] Failed to watch Claude root:', message);
+        this.claudeRootWatcherSetup = undefined;
         this.scheduleClaudeRootWatcherRetry();
       }
     }).finally(() => {
