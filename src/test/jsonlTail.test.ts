@@ -840,7 +840,7 @@ test('JsonlTailDataSource emits the latest existing turn on first encounter', as
   }
 });
 
-test('JsonlTailDataSource emits zero-token updates when a fresh session starts', async () => {
+test('JsonlTailDataSource does not emit zero-token updates after a session reset', async () => {
   const fixture = await createClaudeFixture('claude-jsonl-tail-zero-token-');
   const originalEnv = snapshotProcessEnv();
 
@@ -856,7 +856,9 @@ test('JsonlTailDataSource emits zero-token updates when a fresh session starts',
     const initialUpdate = await waitForUpdate(dataSource, (update) => update.totalTokens === 100);
     assert.equal(initialUpdate.sessionPath, fixture.sessionPath);
 
-    const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 0);
+    let extraUpdateCount = 0;
+    dataSource.onDidChange(() => { extraUpdateCount += 1; });
+
     // Intentionally overwrites (not appends) to simulate a session reset; relies on
     // readNewBytesCore resetting its offset when it detects the file has shrunk.
     await writeFile(
@@ -867,10 +869,8 @@ test('JsonlTailDataSource emits zero-token updates when a fresh session starts',
       fixture.sessionPath
     );
 
-    const update = await nextUpdate;
-    assert.equal(update.fillPercent, 0);
-    assert.equal(update.totalTokens, 0);
-    assert.equal(update.sessionPath, fixture.sessionPath);
+    // Zero-token lines are filtered out — no new update should fire.
+    assert.equal(extraUpdateCount, 0);
   } finally {
     dataSource.dispose();
     restoreProcessEnv(originalEnv);

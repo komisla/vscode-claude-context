@@ -108,8 +108,8 @@ test('parser warns once per session when usage has no numeric token fields', () 
   };
 
   try {
-    assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'invalid-usage.jsonl')?.totalTokens, 0);
-    assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'invalid-usage.jsonl')?.totalTokens, 0);
+    assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'invalid-usage.jsonl'), undefined);
+    assert.equal(parseContextUpdateFromLine(JSON.stringify(line), 'invalid-usage.jsonl'), undefined);
 
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Assistant usage has no numeric token fields/);

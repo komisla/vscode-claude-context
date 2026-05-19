@@ -22,7 +22,15 @@ type WebviewCommand =
       readonly type: 'startNewChat';
     }
   | {
-      readonly type: 'enableHistoricalUsage';
+      readonly type: 'toggleHistoricalUsage';
+      readonly value: boolean;
+    }
+  | {
+      readonly type: 'reload';
+    }
+  | {
+      readonly type: 'toggleTotalFill';
+      readonly value: boolean;
     }
   | {
       readonly type: 'ready';
@@ -51,6 +59,8 @@ interface WebviewRateLimitSnapshot {
 interface WebviewSnapshotPayload {
   readonly breakdown: ContextBreakdown;
   readonly showHistoricalUsage: boolean;
+  readonly showTotalFill?: boolean;
+  readonly isRefreshing?: boolean;
   readonly rateLimit?: WebviewRateLimitSnapshot;
   readonly history?: WebviewHistoricalUsageSnapshot;
   readonly error?: string;
@@ -157,10 +167,21 @@ export class BreakdownPanel implements vscode.Disposable {
     }
 
     const sequence = ++this.postSequence;
+    const config = vscode.workspace.getConfiguration('claudeContext');
+    const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', true);
+    const showTotalFill = config.get<boolean>('showTotalFill', false);
+
+    // Fast path: immediately show last known state while fresh data loads
+    if (this.lastPayload !== undefined) {
+      await this.postWebviewMessage(panel, {
+        type: 'contextSnapshot',
+        payload: { ...this.lastPayload, isRefreshing: true, showHistoricalUsage, showTotalFill }
+      });
+    }
+
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const latest = source.getLatest();
     const breakdown = await reconstructContextBreakdown(latest, { workspaceRoot });
-    const showHistoricalUsage = this.isHistoricalUsageEnabled();
 
     if (this.panel !== panel || sequence !== this.postSequence) {
       return;
@@ -169,6 +190,7 @@ export class BreakdownPanel implements vscode.Disposable {
     await this.postSnapshotPayload(panel, {
       breakdown,
       showHistoricalUsage,
+      showTotalFill,
       error: latest.error
     });
 
@@ -189,6 +211,7 @@ export class BreakdownPanel implements vscode.Disposable {
         await this.postSnapshotPayload(panel, {
           breakdown,
           showHistoricalUsage,
+          showTotalFill,
           rateLimit: rateLimit === undefined ? undefined : toWebviewRateLimit(rateLimit),
           history: history === undefined ? undefined : toWebviewHistoricalUsage(history),
           error: latest.error
@@ -280,14 +303,32 @@ export class BreakdownPanel implements vscode.Disposable {
         });
         return;
       }
-      case 'enableHistoricalUsage': {
+      case 'toggleHistoricalUsage': {
         await vscode.workspace
           .getConfiguration('claudeContext')
-          .update('showHistoricalUsage', true, vscode.ConfigurationTarget.Global);
+          .update('showHistoricalUsage', message.value, vscode.ConfigurationTarget.Global);
 
         const source = this.source;
         if (source !== undefined) {
-          await this.postSnapshot(source);
+          void this.postSnapshot(source);
+        }
+        return;
+      }
+      case 'reload': {
+        const source = this.source;
+        if (source !== undefined) {
+          void this.postSnapshot(source);
+        }
+        return;
+      }
+      case 'toggleTotalFill': {
+        await vscode.workspace
+          .getConfiguration('claudeContext')
+          .update('showTotalFill', message.value, vscode.ConfigurationTarget.Global);
+
+        const source = this.source;
+        if (source !== undefined) {
+          void this.postSnapshot(source);
         }
         return;
       }
@@ -330,7 +371,7 @@ export class BreakdownPanel implements vscode.Disposable {
   }
 
   private isHistoricalUsageEnabled(): boolean {
-    return vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false);
+    return vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true);
   }
 }
 
@@ -343,7 +384,9 @@ function isWebviewCommand(value: unknown): value is WebviewCommand {
     isRecord(value) &&
     (value.type === 'copyCompact' ||
       value.type === 'startNewChat' ||
-      value.type === 'enableHistoricalUsage' ||
+      value.type === 'toggleHistoricalUsage' ||
+      value.type === 'reload' ||
+      value.type === 'toggleTotalFill' ||
       value.type === 'ready')
   );
 }

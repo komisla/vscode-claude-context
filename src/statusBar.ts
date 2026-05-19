@@ -71,7 +71,8 @@ export class StatusBarController implements vscode.Disposable {
 
     const config = vscode.workspace.getConfiguration('claudeContext');
     const hideBelow = config.get<number>('hideBelow', 0);
-    const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', false);
+    const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', true);
+    const showTotalFill = config.get<boolean>('showTotalFill', false);
 
     if (
       this.latest?.error === SESSION_NOT_FOUND_ERROR ||
@@ -96,7 +97,20 @@ export class StatusBarController implements vscode.Disposable {
     this.startRateLimitTimerIfNeeded();
 
     const rateLimit = showHistoricalUsage ? this.latestRateLimit : undefined;
-    const parts = [`$(hubot) ctx ${fillPercent}%`];
+
+    let ctxLabel = `$(hubot) ctx ${fillPercent}%`;
+
+    if (
+      showTotalFill &&
+      this.latest.contextWindow !== undefined &&
+      this.latest.contextWindow > 0 &&
+      this.latest.totalTokens !== undefined
+    ) {
+      const totalPct = Math.round((this.latest.totalTokens / this.latest.contextWindow) * 100);
+      ctxLabel += ` (${totalPct}%)`;
+    }
+
+    const parts = [ctxLabel];
 
     if (rateLimit !== undefined) {
       parts.push(`5h ${Math.round(rateLimit.pct5h)}%`, `7d ${Math.round(rateLimit.pct7d)}%`);
@@ -118,7 +132,7 @@ export class StatusBarController implements vscode.Disposable {
       return;
     }
 
-    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false)) {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
       this.stopRateLimitTimer();
       this.latestRateLimit = undefined;
       return;
@@ -145,7 +159,7 @@ export class StatusBarController implements vscode.Disposable {
       return;
     }
 
-    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false)) {
+    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', true)) {
       this.latestRateLimit = undefined;
       this.stopRateLimitTimer();
       return;
