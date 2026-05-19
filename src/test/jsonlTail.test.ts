@@ -713,6 +713,42 @@ test('JsonlTailDataSource emits the latest existing turn on first encounter', as
   }
 });
 
+test('JsonlTailDataSource emits zero-token updates when a fresh session starts', async () => {
+  const fixture = await createClaudeFixture('claude-jsonl-tail-zero-token-');
+  const originalEnv = snapshotProcessEnv();
+
+  applyClaudeHome(fixture.homeDir);
+  await writeFile(
+    fixture.sessionPath,
+    `${JSON.stringify(makeAssistantLine('2026-05-16T11:00:00Z', 100))}\n`
+  );
+
+  const dataSource = new JsonlTailDataSource(createMockVscode([fixture.workspaceRoot]));
+
+  try {
+    const initialUpdate = await waitForUpdate(dataSource, (update) => update.totalTokens === 100);
+    assert.equal(initialUpdate.sessionPath, fixture.sessionPath);
+
+    const nextUpdate = waitForUpdate(dataSource, (update) => update.totalTokens === 0);
+    await writeFile(
+      fixture.sessionPath,
+      `${JSON.stringify(makeAssistantLine('2026-05-16T11:01:00Z', 0))}\n`
+    );
+    await (dataSource as unknown as { readNewBytes: (filePath: string) => Promise<void> }).readNewBytes(
+      fixture.sessionPath
+    );
+
+    const update = await nextUpdate;
+    assert.equal(update.fillPercent, 0);
+    assert.equal(update.totalTokens, 0);
+    assert.equal(update.sessionPath, fixture.sessionPath);
+  } finally {
+    dataSource.dispose();
+    restoreProcessEnv(originalEnv);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('JsonlTailDataSource polls active jsonl appends without watcher events', async () => {
   const fixture = await createClaudeFixture('claude-jsonl-tail-poll-');
   const originalEnv = snapshotProcessEnv();
@@ -849,14 +885,16 @@ test('refreshActiveSessionCore prunes inactive offsets and remainders', async ()
   }
 });
 
-test('scheduleTick measures cooldown from refresh completion', async () => {
+test('scheduleTick measures cooldown from latest read completion', async () => {
   const dataSource = new JsonlTailDataSource(createMockVscode([]));
   await delay(25);
 
   const mutable = dataSource as unknown as {
     scheduleTick: () => void;
     refreshActiveSessionCore: () => Promise<void>;
-    lastTickAt: number;
+    readNewBytes: (filePath: string) => Promise<void>;
+    readNewBytesCore: (filePath: string) => Promise<void>;
+    lastReadAt: number;
   };
 
   let releaseRefresh: (() => void) | undefined;
@@ -867,19 +905,57 @@ test('scheduleTick measures cooldown from refresh completion', async () => {
 
   mutable.refreshActiveSessionCore = async () => {
     await refreshGate;
+    await mutable.readNewBytes('session.jsonl');
   };
+  mutable.readNewBytesCore = async () => undefined;
 
   try {
-    mutable.lastTickAt = before - 5_000;
+    mutable.lastReadAt = before - 5_000;
     mutable.scheduleTick();
     await delay(0);
 
-    assert.equal(mutable.lastTickAt, before - 5_000);
+    assert.equal(mutable.lastReadAt, before - 5_000);
 
     releaseRefresh?.();
     await delay(0);
 
-    assert.ok(mutable.lastTickAt >= before);
+    assert.ok(mutable.lastReadAt >= before);
+  } finally {
+    dataSource.dispose();
+  }
+});
+
+test('readNewBytes updates lastReadAt before watcher debounce is calculated', async () => {
+  const dataSource = new JsonlTailDataSource(createMockVscode([]));
+  await delay(25);
+
+  const mutable = dataSource as unknown as {
+    scheduleTick: () => void;
+    refreshActiveSessionCore: () => Promise<void>;
+    readNewBytes: (filePath: string) => Promise<void>;
+    readNewBytesCore: (filePath: string) => Promise<void>;
+    lastReadAt: number;
+    tickTimer: unknown;
+  };
+  let refreshCalls = 0;
+  const before = Date.now();
+
+  mutable.readNewBytesCore = async () => undefined;
+  mutable.refreshActiveSessionCore = async () => {
+    refreshCalls += 1;
+  };
+
+  try {
+    mutable.lastReadAt = before - 5_000;
+    await mutable.readNewBytes('session.jsonl');
+
+    assert.ok(mutable.lastReadAt >= before);
+
+    mutable.scheduleTick();
+    await delay(0);
+
+    assert.equal(refreshCalls, 0);
+    assert.notEqual(mutable.tickTimer, undefined);
   } finally {
     dataSource.dispose();
   }
@@ -892,7 +968,9 @@ test('scheduleTick queues a follow-up tick while refresh is in flight', async ()
   const mutable = dataSource as unknown as {
     scheduleTick: () => void;
     refreshActiveSessionCore: () => Promise<void>;
-    lastTickAt: number;
+    readNewBytes: (filePath: string) => Promise<void>;
+    readNewBytesCore: (filePath: string) => Promise<void>;
+    lastReadAt: number;
     pendingTick: boolean;
     tickTimer: unknown;
   };
@@ -904,10 +982,12 @@ test('scheduleTick queues a follow-up tick while refresh is in flight', async ()
 
   mutable.refreshActiveSessionCore = async () => {
     await refreshGate;
+    await mutable.readNewBytes('session.jsonl');
   };
+  mutable.readNewBytesCore = async () => undefined;
 
   try {
-    mutable.lastTickAt = Date.now() - 5_000;
+    mutable.lastReadAt = Date.now() - 5_000;
     mutable.scheduleTick();
     await delay(0);
 
