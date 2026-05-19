@@ -437,6 +437,8 @@
         }
       });
 
+      vscode.postMessage({ type: 'ready' });
+
       function renderSnapshot(snapshot) {
         const breakdown = snapshot.breakdown;
 
