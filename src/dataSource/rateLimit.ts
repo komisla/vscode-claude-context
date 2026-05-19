@@ -6,13 +6,17 @@ import { clearTimeout, setTimeout } from 'timers';
 export const RATE_LIMIT_REFRESH_MS = 5 * 60 * 1_000;
 export const RATE_LIMIT_ERROR_RETRY_MS = 30 * 1_000;
 
-const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_COUNT_TOKENS_URL = 'https://api.anthropic.com/v1/messages/count_tokens';
 const RATE_LIMIT_FETCH_TIMEOUT_MS = 8_000;
 const RATE_LIMIT_5H_HEADER = 'anthropic-ratelimit-unified-5h-utilization';
 const RATE_LIMIT_7D_HEADER = 'anthropic-ratelimit-unified-7d-utilization';
 const RATE_LIMIT_5H_RESET_HEADER = 'anthropic-ratelimit-unified-5h-reset';
 const RATE_LIMIT_7D_RESET_HEADER = 'anthropic-ratelimit-unified-7d-reset';
-const RATE_LIMIT_PROBE_MODELS = ['claude-haiku-4-5-20251001', 'claude-haiku-4-5'] as const;
+const RATE_LIMIT_PROBE_MODELS = [
+  'claude-opus-4-5',
+  'claude-haiku-4-5-20251001',
+  'claude-haiku-4-5'
+] as const;
 
 export interface RateLimitSnapshot {
   readonly pct5h: number;
@@ -123,7 +127,7 @@ export class RateLimitReader {
         throw new Error('missing fetch implementation');
       }
 
-      return await this.fetcher(ANTHROPIC_MESSAGES_URL, {
+      return await this.fetcher(ANTHROPIC_COUNT_TOKENS_URL, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -133,8 +137,7 @@ export class RateLimitReader {
         },
         body: JSON.stringify({
           model,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: '.' }]
+          messages: [{ role: 'user', content: 'x' }]
         }),
         signal: controller.signal
       });

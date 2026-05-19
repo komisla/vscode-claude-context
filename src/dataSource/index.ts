@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { JsonlTailDataSource } from './jsonlTail';
+export { SESSION_NOT_FOUND_ERROR } from './jsonlTail';
 
 export interface ContextUpdate {
   readonly fillPercent?: number;

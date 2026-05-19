@@ -17,6 +17,13 @@ interface VscodeMock {
     openExternalResult: boolean;
     readonly openExternalCalls: { readonly toString: () => string }[];
   };
+  readonly workspace: {
+    readonly getConfiguration: (
+      section: string
+    ) => {
+      readonly get: <T>(key: string, defaultValue: T) => T;
+    };
+  };
   readonly window: {
     readonly webviewPanels: Array<{
       readonly postedMessages: Array<{ readonly type: string; readonly payload?: unknown }>;
@@ -371,6 +378,62 @@ test('BreakdownPanel posts context before usage snapshots settle', async () => {
     assert.equal(secondMessage.payload.rateLimit?.pct5h, 20);
     assert.equal(secondMessage.payload.rateLimit?.pct7d, 30);
     assert.equal(secondMessage.payload.history?.hasData, true);
+  } finally {
+    tracker.source.dispose();
+    panel.dispose();
+  }
+});
+
+test('BreakdownPanel lets the webview opt into historical usage', async () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    showHistoricalUsage: false
+  });
+
+  let refreshCalls = 0;
+  const historicalUsage = {
+    refresh: async () => {
+      refreshCalls += 1;
+      return makeHistorySnapshot();
+    },
+    calculateSnapshot: () => makeHistorySnapshot()
+  } as unknown as HistoricalUsageReader;
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 45
+  });
+
+  const panel = new BreakdownPanel(vscode.Uri.parse('file:///extension'), historicalUsage, rateLimit);
+  panel.open(tracker.source);
+  const mockPanel = vscodeMock.window.webviewPanels[0];
+
+  try {
+    await waitFor(() => mockPanel.postedMessages.length >= 2);
+    const beforeEnable = mockPanel.postedMessages.at(-1) as {
+      readonly payload: { readonly showHistoricalUsage: boolean; readonly rateLimit?: unknown };
+    };
+    assert.equal(beforeEnable.payload.showHistoricalUsage, false);
+    assert.equal(beforeEnable.payload.rateLimit, undefined);
+    assert.equal(refreshCalls, 0);
+
+    mockPanel.webview.receiveMessage({ type: 'enableHistoricalUsage' });
+    await waitFor(() => refreshCalls === 1);
+
+    assert.equal(
+      vscodeMock.workspace
+        .getConfiguration('claudeContext')
+        .get<boolean>('showHistoricalUsage', false),
+      true
+    );
+    const afterEnable = mockPanel.postedMessages.at(-1) as {
+      readonly payload: { readonly showHistoricalUsage: boolean; readonly rateLimit?: unknown };
+    };
+    assert.equal(afterEnable.payload.showHistoricalUsage, true);
+    assert.notEqual(afterEnable.payload.rateLimit, undefined);
   } finally {
     tracker.source.dispose();
     panel.dispose();

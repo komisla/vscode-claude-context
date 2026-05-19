@@ -20,6 +20,9 @@ type WebviewCommand =
     }
   | {
       readonly type: 'startNewChat';
+    }
+  | {
+      readonly type: 'enableHistoricalUsage';
     };
 
 interface WebviewModelUsage {
@@ -44,6 +47,7 @@ interface WebviewRateLimitSnapshot {
 
 interface WebviewSnapshotPayload {
   readonly breakdown: ContextBreakdown;
+  readonly showHistoricalUsage: boolean;
   readonly rateLimit?: WebviewRateLimitSnapshot;
   readonly history?: WebviewHistoricalUsageSnapshot;
   readonly error?: string;
@@ -65,6 +69,7 @@ type WebviewOutgoingMessage =
 
 export class BreakdownPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
+  private source: ContextDataSource | undefined;
   private readonly historicalUsage: HistoricalUsageReader;
   private readonly rateLimit: RateLimitReader;
   private readonly panelSubscriptions: vscode.Disposable[] = [];
@@ -86,9 +91,12 @@ export class BreakdownPanel implements vscode.Disposable {
     this.disposePanelSubscriptions();
     this.panel?.dispose();
     this.panel = undefined;
+    this.source = undefined;
   }
 
   public open(source: ContextDataSource): void {
+    this.source = source;
+
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.One);
       void this.postSnapshot(source);
@@ -146,6 +154,7 @@ export class BreakdownPanel implements vscode.Disposable {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const latest = source.getLatest();
     const breakdown = await reconstructContextBreakdown(latest, { workspaceRoot });
+    const showHistoricalUsage = this.isHistoricalUsageEnabled();
 
     if (this.panel !== panel || sequence !== this.postSequence) {
       return;
@@ -155,6 +164,7 @@ export class BreakdownPanel implements vscode.Disposable {
       type: 'contextSnapshot',
       payload: {
         breakdown,
+        showHistoricalUsage,
         error: latest.error
       }
     });
@@ -169,6 +179,7 @@ export class BreakdownPanel implements vscode.Disposable {
           type: 'contextSnapshot',
           payload: {
             breakdown,
+            showHistoricalUsage,
             rateLimit: rateLimit === undefined ? undefined : toWebviewRateLimit(rateLimit),
             history: history === undefined ? undefined : toWebviewHistoricalUsage(history),
             error: latest.error
@@ -179,7 +190,7 @@ export class BreakdownPanel implements vscode.Disposable {
   }
 
   private async readHistoricalUsage(): Promise<HistoricalUsageSnapshot | undefined> {
-    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false)) {
+    if (!this.isHistoricalUsageEnabled()) {
       return undefined;
     }
 
@@ -213,7 +224,7 @@ export class BreakdownPanel implements vscode.Disposable {
   }
 
   private readRateLimit(): Promise<RateLimitSnapshot | undefined> {
-    if (!vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false)) {
+    if (!this.isHistoricalUsageEnabled()) {
       return Promise.resolve(undefined);
     }
 
@@ -261,6 +272,17 @@ export class BreakdownPanel implements vscode.Disposable {
         });
         return;
       }
+      case 'enableHistoricalUsage': {
+        await vscode.workspace
+          .getConfiguration('claudeContext')
+          .update('showHistoricalUsage', true, vscode.ConfigurationTarget.Global);
+
+        const source = this.source;
+        if (source !== undefined) {
+          await this.postSnapshot(source);
+        }
+        return;
+      }
       default: {
         const exhaustiveCheck: never = message;
         return exhaustiveCheck;
@@ -278,6 +300,10 @@ export class BreakdownPanel implements vscode.Disposable {
       // The panel can be disposed between the guard and the send.
     }
   }
+
+  private isHistoricalUsageEnabled(): boolean {
+    return vscode.workspace.getConfiguration('claudeContext').get<boolean>('showHistoricalUsage', false);
+  }
 }
 
 function getNonce(): string {
@@ -287,7 +313,9 @@ function getNonce(): string {
 function isWebviewCommand(value: unknown): value is WebviewCommand {
   return (
     isRecord(value) &&
-    (value.type === 'copyCompact' || value.type === 'startNewChat')
+    (value.type === 'copyCompact' ||
+      value.type === 'startNewChat' ||
+      value.type === 'enableHistoricalUsage')
   );
 }
 

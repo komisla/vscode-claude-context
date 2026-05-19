@@ -165,6 +165,46 @@ test('StatusBarController shows an idle indicator when no fillPercent is availab
   tracker.source.dispose();
 });
 
+test('StatusBarController stops the rate-limit timer when the session disappears', () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    hideBelow: 0,
+    showHistoricalUsage: true
+  });
+
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 70,
+    totalTokens: 70_000,
+    contextWindow: 100_000,
+    effectiveWindow: 100_000
+  });
+
+  const controller = new StatusBarController(tracker.source, rateLimit);
+  const item = vscodeMock.window.statusBarItems[0];
+
+  tracker.fire({
+    fillPercent: 70,
+    totalTokens: 70_000,
+    contextWindow: 100_000,
+    effectiveWindow: 100_000
+  });
+
+  assert.notEqual((controller as unknown as { rateLimitRefreshTimer: unknown }).rateLimitRefreshTimer, undefined);
+
+  tracker.fire({ error: 'Claude Code session not found' });
+
+  assert.equal((controller as unknown as { rateLimitRefreshTimer: unknown }).rateLimitRefreshTimer, undefined);
+  assert.equal(item.text, '$(hubot) ctx idle');
+
+  controller.dispose();
+  tracker.source.dispose();
+});
+
 test('StatusBarController stays visible at low fillPercent when hideBelow is 0', () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();

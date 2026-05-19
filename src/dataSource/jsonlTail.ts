@@ -14,7 +14,7 @@ const CLAUDE_INTERNAL_RESERVE_TOKENS = 13_000;
 const WATCHER_ERROR_RETRY_MS = 30_000;
 const CLAUDE_ROOT_WATCHER_ERROR_RETRY_MS = 60_000;
 const STALE_LOCK_TTL_MS = 10 * 60 * 1000;
-const SESSION_NOT_FOUND_ERROR = 'Claude Code session not found';
+export const SESSION_NOT_FOUND_ERROR = 'Claude Code session not found';
 const USAGE_TOKEN_FIELDS = [
   'input_tokens',
   'cache_read_input_tokens',

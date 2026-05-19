@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { clearInterval, setInterval } from 'timers';
-import type { ContextDataSource, ContextUpdate } from './dataSource';
+import { SESSION_NOT_FOUND_ERROR, type ContextDataSource, type ContextUpdate } from './dataSource';
 import { RATE_LIMIT_REFRESH_MS, RateLimitReader, type RateLimitSnapshot } from './dataSource/rateLimit';
 import { buildTooltipText } from './statusBarFormatting';
 
@@ -73,7 +73,10 @@ export class StatusBarController implements vscode.Disposable {
     const hideBelow = config.get<number>('hideBelow', 0);
     const showHistoricalUsage = config.get<boolean>('showHistoricalUsage', false);
 
-    if (this.latest?.fillPercent === undefined) {
+    if (
+      this.latest?.error === SESSION_NOT_FOUND_ERROR ||
+      this.latest?.fillPercent === undefined
+    ) {
       this.stopRateLimitTimer();
       this.item.text = '$(hubot) ctx idle';
       this.item.tooltip = 'Claude Context Monitor: waiting for an active Claude Code session';
