@@ -202,7 +202,10 @@ export class HistoricalUsageReader {
       }
     }
 
-    await Promise.all(jsonlPaths.map((jsonlPath) => this.refreshFile(jsonlPath, nowMs)));
+    // Each file contributes independently; refreshFile handles expected I/O
+    // races internally, and allSettled keeps one unexpected rejection from
+    // skipping the remaining session files.
+    await Promise.allSettled(jsonlPaths.map((jsonlPath) => this.refreshFile(jsonlPath, nowMs)));
 
     return this.calculateSnapshot(nowMs);
   }
