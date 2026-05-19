@@ -234,7 +234,7 @@ export class JsonlTailDataSource implements ContextDataSource {
   private pollJsonlPath: string | undefined;
   private pollInFlight: Promise<void> | undefined;
   private claudeRootWatcherRetryTimer: ReturnType<typeof setTimeout> | undefined;
-  private lastTickAt = 0;
+  private lastReadAt = 0;
   private pendingTick = false;
   private currentProjectDir: string | undefined;
   private readonly offsets = new Map<string, number>();
@@ -493,14 +493,12 @@ export class JsonlTailDataSource implements ContextDataSource {
       return;
     }
 
-    const elapsedMs = Date.now() - this.lastTickAt;
+    const elapsedMs = Date.now() - this.lastReadAt;
     const delayMs = Math.max(UPDATE_INTERVAL_MS - elapsedMs, 0);
 
     this.tickTimer = setTimeout(() => {
       this.tickTimer = undefined;
-      void this.refreshActiveSession().finally(() => {
-        this.lastTickAt = Date.now();
-      });
+      void this.refreshActiveSession();
     }, delayMs);
   }
 
@@ -783,6 +781,8 @@ export class JsonlTailDataSource implements ContextDataSource {
     try {
       await current;
     } finally {
+      this.lastReadAt = Date.now();
+
       if (this.readNewBytesInFlight.get(filePath) === current) {
         this.readNewBytesInFlight.delete(filePath);
       }
@@ -928,7 +928,6 @@ export class JsonlTailDataSource implements ContextDataSource {
     }
 
     this.pendingTick = false;
-    this.lastTickAt = Date.now();
     this.scheduleTick();
   }
 
