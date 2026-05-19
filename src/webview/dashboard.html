@@ -164,6 +164,17 @@
         margin-top: 12px;
       }
 
+      .opt-in-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .opt-in-row p {
+        margin-bottom: 0;
+      }
+
       .badge {
         color: var(--vscode-badge-foreground);
         background: var(--vscode-badge-background);
@@ -311,6 +322,15 @@
         <div id="model-list"></div>
       </section>
 
+      <section id="history-opt-in" class="panel hidden" aria-labelledby="history-opt-in-title">
+        <h2 id="history-opt-in-title">Plan rate limit utilization</h2>
+        <div class="opt-in-row">
+          <p class="muted status">Plan-utilization polling is off.</p>
+          <button id="enable-history" type="button">Enable</button>
+          <span class="muted">Sends one request to api.anthropic.com every 5 min.</span>
+        </div>
+      </section>
+
       <details>
         <summary>How context fill affects response quality</summary>
         <p class="muted">
@@ -380,6 +400,8 @@
       const commandStatus = document.getElementById('command-status');
       const newChatInstructions = document.getElementById('new-chat-instructions');
       const historySection = document.getElementById('history-section');
+      const historyOptIn = document.getElementById('history-opt-in');
+      const enableHistory = document.getElementById('enable-history');
       const historyList = document.getElementById('history-list');
       const modelTitle = document.getElementById('model-title');
       const modelList = document.getElementById('model-list');
@@ -391,6 +413,10 @@
       startNewChat.addEventListener('click', (event) => {
         event.preventDefault();
         vscode.postMessage({ type: 'startNewChat' });
+      });
+
+      enableHistory.addEventListener('click', () => {
+        vscode.postMessage({ type: 'enableHistoricalUsage' });
       });
 
       window.addEventListener('message', (event) => {
@@ -431,7 +457,7 @@
         emptyState.classList.remove('loading');
         dashboard.classList.remove('hidden');
         renderContext(breakdown);
-        renderHistory(snapshot.rateLimit, snapshot.history);
+        renderHistory(snapshot.showHistoricalUsage, snapshot.rateLimit, snapshot.history);
       }
 
       function renderContext(breakdown) {
@@ -498,7 +524,16 @@
         driftWarning.classList.remove('hidden');
       }
 
-      function renderHistory(rateLimit, history) {
+      function renderHistory(showHistoricalUsage, rateLimit, history) {
+        historyOptIn.classList.toggle('hidden', showHistoricalUsage);
+
+        if (!showHistoricalUsage) {
+          historySection.classList.add('hidden');
+          modelTitle.classList.add('hidden');
+          modelList.replaceChildren();
+          return;
+        }
+
         if (!rateLimit) {
           historySection.classList.add('hidden');
           modelTitle.classList.add('hidden');

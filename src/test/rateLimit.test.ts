@@ -74,11 +74,17 @@ test('RateLimitReader reads utilization and reset headers from the API response'
     reset5h: '2026-05-18T12:00:00Z',
     reset7d: '2026-05-19T12:00:00Z'
   });
-  assert.equal(requestedUrl, 'https://api.anthropic.com/v1/messages');
+  assert.equal(requestedUrl, 'https://api.anthropic.com/v1/messages/count_tokens');
   assert.equal(requestedInit?.headers.Authorization, 'Bearer oauth-token');
   assert.equal(requestedInit?.headers['anthropic-beta'], 'oauth-2025-04-20');
-  const requestedBody = JSON.parse(requestedInit?.body ?? '{}') as { readonly model?: string };
-  assert.equal(requestedBody.model, 'claude-haiku-4-5-20251001');
+  const requestedBody = JSON.parse(requestedInit?.body ?? '{}') as {
+    readonly model?: string;
+    readonly max_tokens?: number;
+    readonly messages?: readonly { readonly role: string; readonly content: string }[];
+  };
+  assert.equal(requestedBody.model, 'claude-opus-4-5');
+  assert.equal(requestedBody.max_tokens, undefined);
+  assert.deepEqual(requestedBody.messages, [{ role: 'user', content: 'x' }]);
   assert.notEqual(requestedInit?.signal, undefined);
   assert.equal(requestedInit?.signal?.aborted, false);
 });
@@ -110,7 +116,7 @@ test('RateLimitReader retries with fallback probe model after 404', async () => 
 
   const snapshot = await reader.refresh(NOW);
 
-  assert.deepEqual(requestedModels, ['claude-haiku-4-5-20251001', 'claude-haiku-4-5']);
+  assert.deepEqual(requestedModels, ['claude-opus-4-5', 'claude-haiku-4-5-20251001']);
   assert.deepEqual(snapshot, {
     pct5h: 10,
     pct7d: 20,

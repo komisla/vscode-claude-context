@@ -173,6 +173,12 @@ const workspace = {
         const values = mockState.configuration.get(section);
         const value = values?.[key];
         return value === undefined ? defaultValue : value;
+      },
+      update: (key, value) => {
+        const values = mockState.configuration.get(section) ?? {};
+        mockState.configuration.set(section, { ...values, [key]: value });
+        workspace.fireDidChangeConfiguration(`${section}.${key}`);
+        return Promise.resolve();
       }
     };
   },
@@ -299,6 +305,11 @@ const vscodeMock = {
   },
   ViewColumn: {
     One: 1
+  },
+  ConfigurationTarget: {
+    Global: 1,
+    Workspace: 2,
+    WorkspaceFolder: 3
   },
   workspace,
   window,
