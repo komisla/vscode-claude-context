@@ -477,6 +477,7 @@ export class JsonlTailDataSource implements ContextDataSource {
       this.refreshTimer = undefined;
       void this.refreshActiveSession();
     }, delayMs);
+    this.refreshTimer.unref();
   }
 
   private scheduleTick(): void {
@@ -500,6 +501,7 @@ export class JsonlTailDataSource implements ContextDataSource {
       this.tickTimer = undefined;
       void this.refreshActiveSession();
     }, delayMs);
+    this.tickTimer.unref();
   }
 
   private async refreshActiveSession(): Promise<void> {
@@ -957,6 +959,7 @@ export class JsonlTailDataSource implements ContextDataSource {
           this.pollInFlight = undefined;
         });
     }, UPDATE_INTERVAL_MS);
+    this.pollTimer.unref();
   }
 
   private clearActiveSessionPolling(): void {
@@ -982,6 +985,7 @@ export class JsonlTailDataSource implements ContextDataSource {
       this.claudeRootWatcherRetryTimer = undefined;
       this.watchClaudeRoot();
     }, 60_000);
+    this.claudeRootWatcherRetryTimer.unref();
   }
 }
 

@@ -121,6 +121,7 @@ export class RateLimitReader {
   private async fetchProbe(token: string, model: string): Promise<RateLimitFetchResponse> {
     const controller = new globalThis.AbortController();
     const timeout = setTimeout(() => controller.abort(), this.fetchTimeoutMs);
+    timeout.unref();
 
     try {
       if (this.fetcher === undefined) {
