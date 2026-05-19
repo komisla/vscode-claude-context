@@ -378,7 +378,6 @@ async function getMemoryFingerprint(
   sessionPath: string | undefined,
   now: number
 ): Promise<readonly string[]> {
-
   if (sessionPath === undefined) {
     return [];
   }

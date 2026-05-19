@@ -140,6 +140,7 @@ test('RateLimitReader aborts the API request when the fetch timeout elapses', as
 
   const refreshPromise = reader.refresh(NOW);
 
+  // Give the unref'd abort timer a tick to fire before we await the result.
   await new Promise((resolve) => globalThis.setTimeout(resolve, 20));
 
   const snapshot = await refreshPromise;
