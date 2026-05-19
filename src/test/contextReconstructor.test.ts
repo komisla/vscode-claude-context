@@ -36,7 +36,7 @@ test('counts workspace, ancestor, global CLAUDE.md files and direct imports', as
     const globalImport = 'global imported';
     const parentClaude = 'parent rules @./parent-import.md\nRepo @long-kudo/vscode-claude-status';
     const parentImport = 'parent imported';
-    const workspaceClaude = `workspace rules @./workspace-import.md for details @missing.md @./my-package.md\nLies @issue.md genau\nEmail slavik@korbinian.eu\nPackage @types/node`;
+    const workspaceClaude = `workspace rules @./workspace-import.md for details @missing.md @./my-package.md\nLies @issue.md genau\nEmail user@example.com\nPackage @types/node`;
     const workspaceImport = 'workspace imported';
     const relativeImport = 'relative import should be counted';
     const falsePositiveImport = 'false positive should not be counted';
@@ -52,7 +52,7 @@ test('counts workspace, ancestor, global CLAUDE.md files and direct imports', as
     await writeFile(path.join(workspaceRoot, 'workspace-import.md'), workspaceImport);
     await writeFile(path.join(workspaceRoot, 'my-package.md'), relativeImport);
     await writeFile(path.join(workspaceRoot, 'issue.md'), falsePositiveImport);
-    await writeFile(path.join(workspaceRoot, 'korbinian.eu'), emailMatch);
+    await writeFile(path.join(workspaceRoot, 'example.com'), emailMatch);
     await mkdir(path.join(root, 'repo', 'long-kudo'), { recursive: true });
     await writeFile(path.join(root, 'repo', 'long-kudo', 'vscode-claude-status'), repoReference);
     await mkdir(path.join(workspaceRoot, 'types'), { recursive: true });
