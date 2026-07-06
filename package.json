@@ -2,7 +2,7 @@
   "name": "vscode-claude-context",
   "displayName": "Claude Context Monitor",
   "description": "Live Claude Code context window monitor with traffic-light status bar and token breakdown panel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "KorbinianSlavik",
   "icon": "icon.png",
   "license": "MIT",
