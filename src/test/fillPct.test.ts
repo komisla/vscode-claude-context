@@ -38,10 +38,30 @@ test('unknown opus models fall back to opus family limits', () => {
 });
 
 test('unknown sonnet models fall back to sonnet family limits', () => {
-  const limits = getModelLimits('claude-sonnet-5');
+  const limits = getModelLimits('claude-sonnet-7');
 
   assert.equal(limits.contextWindow, 200_000);
   assert.equal(limits.maxOutputTokens, 8_192);
+});
+
+test('claude sonnet 5, opus 4.8, and fable 5 use the current Anthropic limits', () => {
+  const sonnet5 = getModelLimits('claude-sonnet-5');
+  const opus48 = getModelLimits('claude-opus-4-8');
+  const fable5 = getModelLimits('claude-fable-5');
+
+  assert.equal(sonnet5.contextWindow, 200_000);
+  assert.equal(sonnet5.maxOutputTokens, 8_192);
+  assert.equal(opus48.contextWindow, 200_000);
+  assert.equal(opus48.maxOutputTokens, 32_000);
+  assert.equal(fable5.contextWindow, 200_000);
+  assert.equal(fable5.maxOutputTokens, 32_000);
+});
+
+test('unknown fable models fall back to opus-tier limits', () => {
+  const limits = getModelLimits('claude-fable-6');
+
+  assert.equal(limits.contextWindow, 200_000);
+  assert.equal(limits.maxOutputTokens, 32_000);
 });
 
 test('unknown haiku models fall back to haiku family limits', () => {

@@ -65,11 +65,16 @@ const warnedInvalidUsageSessionPaths = new Set<string>();
 
 // Context windows verified empirically via Claude Code Stop hook context_window_percentage
 // field (anthropics/claude-code#11008). Claude 4.x models use 200K despite some API docs
-// listing higher maximums — the effective in-session window is 200K.
+// listing higher maximums (up to 1M) — the effective in-session window Claude Code itself
+// operates with is 200K. This also holds for Opus 4.8, Sonnet 5, and Fable 5.
 export const MODEL_TABLE: Readonly<Record<string, ModelLimits>> = {
+  'claude-fable-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  'claude-mythos-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  'claude-opus-4-8': { contextWindow: 200_000, maxOutputTokens: 32_000 },
   'claude-opus-4-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
   'claude-opus-4-6': { contextWindow: 200_000, maxOutputTokens: 32_000 },
   'claude-opus-4-7': { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  'claude-sonnet-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
   'claude-sonnet-4-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
   'claude-sonnet-4-6': { contextWindow: 200_000, maxOutputTokens: 8_192 },
   'claude-sonnet-4-7': { contextWindow: 200_000, maxOutputTokens: 8_192 },
@@ -130,7 +135,7 @@ function resolveFamilyFallback(normalizedModel: string | undefined): ModelLimits
     return DEFAULT_MODEL_LIMITS;
   }
 
-  if (normalizedModel.startsWith('claude-opus-')) {
+  if (normalizedModel.startsWith('claude-opus-') || normalizedModel.startsWith('claude-fable-') || normalizedModel.startsWith('claude-mythos-')) {
     return { contextWindow: 200_000, maxOutputTokens: 32_000 };
   }
 
