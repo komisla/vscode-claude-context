@@ -63,18 +63,18 @@ const DEFAULT_MODEL_LIMITS: ModelLimits = {
 const warnedUnknownModels = new Set<string>();
 const warnedInvalidUsageSessionPaths = new Set<string>();
 
-// Context windows verified empirically via Claude Code Stop hook context_window_percentage
-// field (anthropics/claude-code#11008). Claude 4.x models use 200K despite some API docs
-// listing higher maximums (up to 1M) — the effective in-session window Claude Code itself
-// operates with is 200K. This also holds for Opus 4.8, Sonnet 5, and Fable 5.
+// Context windows track Claude Code's effective in-session limits, not only API maximums.
+// Sonnet 4.6 remains 200K based on the Stop hook context_window_percentage measurement in
+// anthropics/claude-code#11008; newer Claude Code changelog entries make 1M the default for
+// Opus 4.6+, Sonnet 5, Fable 5, and Mythos 5 unless users opt out.
 export const MODEL_TABLE: Readonly<Record<string, ModelLimits>> = {
-  'claude-fable-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
-  'claude-mythos-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
-  'claude-opus-4-8': { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  'claude-fable-5': { contextWindow: 1_000_000, maxOutputTokens: 32_000 },
+  'claude-mythos-5': { contextWindow: 1_000_000, maxOutputTokens: 32_000 },
+  'claude-opus-4-8': { contextWindow: 1_000_000, maxOutputTokens: 32_000 },
   'claude-opus-4-5': { contextWindow: 200_000, maxOutputTokens: 32_000 },
-  'claude-opus-4-6': { contextWindow: 200_000, maxOutputTokens: 32_000 },
-  'claude-opus-4-7': { contextWindow: 200_000, maxOutputTokens: 32_000 },
-  'claude-sonnet-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
+  'claude-opus-4-6': { contextWindow: 1_000_000, maxOutputTokens: 32_000 },
+  'claude-opus-4-7': { contextWindow: 1_000_000, maxOutputTokens: 32_000 },
+  'claude-sonnet-5': { contextWindow: 1_000_000, maxOutputTokens: 8_192 },
   'claude-sonnet-4-5': { contextWindow: 200_000, maxOutputTokens: 8_192 },
   'claude-sonnet-4-6': { contextWindow: 200_000, maxOutputTokens: 8_192 },
   'claude-sonnet-4-7': { contextWindow: 200_000, maxOutputTokens: 8_192 },
@@ -136,7 +136,7 @@ function resolveFamilyFallback(normalizedModel: string | undefined): ModelLimits
   }
 
   if (normalizedModel.startsWith('claude-opus-') || normalizedModel.startsWith('claude-fable-') || normalizedModel.startsWith('claude-mythos-')) {
-    return { contextWindow: 200_000, maxOutputTokens: 32_000 };
+    return { contextWindow: 1_000_000, maxOutputTokens: 32_000 };
   }
 
   if (normalizedModel.startsWith('claude-sonnet-')) {
@@ -151,7 +151,7 @@ function resolveFamilyFallback(normalizedModel: string | undefined): ModelLimits
 }
 
 /**
- * Context window and reserve values are based on the upstream Claude Code Stop hook
+ * Fill calculation and reserve value are based on the upstream Claude Code Stop hook
  * measurement in anthropics/claude-code#11008.
  */
 export function calculateFillPercent(
