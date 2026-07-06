@@ -92,6 +92,7 @@ Press **F5** in VSCode to launch Extension Development Host.
 - [ ] No scope creep beyond the issue
 - [ ] TypeScript: no unexplained `any`
 - [ ] Conventional Commit message
+- [ ] New/changed `MODEL_TABLE` entries: context window re-verified against the current Claude Code changelog, never copied from an existing row (see [docs/review-process.md](docs/review-process.md))
 
 → Review-Workflow details: [docs/review-process.md](docs/review-process.md)
 
