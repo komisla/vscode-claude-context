@@ -44,6 +44,13 @@ test('unknown sonnet models fall back to sonnet family limits', () => {
   assert.equal(limits.maxOutputTokens, 8_192);
 });
 
+test('opus 5 uses the current Claude Code limits', () => {
+  const limits = getModelLimits('claude-opus-5');
+
+  assert.equal(limits.contextWindow, 1_000_000);
+  assert.equal(limits.maxOutputTokens, 64_000);
+});
+
 test('1M Claude Code models use the current Anthropic limits', () => {
   const sonnet5 = getModelLimits('claude-sonnet-5');
   const opus46 = getModelLimits('claude-opus-4-6');
