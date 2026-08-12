@@ -4,6 +4,8 @@
 
 The extension reads Claude Code's JSONL session files from `~/.claude/projects/`. Each file records turns as newline-delimited JSON. The extension tails the active session file and reconstructs the context breakdown from the token usage fields in each turn.
 
+Project-directory slugs intentionally mirror Claude Code's lossy mapping: every character outside `[A-Za-z0-9]` becomes `-`, one character at a time. Distinct workspace paths can therefore collide and select the wrong session, but the extension never modifies the source JSONL, so no data is lost.
+
 No terminal interception, no VS Code API hooking, no network calls for context data.
 
 ## Data flow

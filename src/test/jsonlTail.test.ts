@@ -291,6 +291,52 @@ test('findActiveSession resolves locks sequentially', async () => {
   }
 });
 
+test('findActiveSession resolves workspace paths containing non-ASCII characters', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-umlaut-'));
+  const homeDir = path.join(root, 'home');
+  const claudeRoot = path.join(homeDir, '.claude');
+  const ideRoot = path.join(claudeRoot, 'ide');
+  const workspaceRoot = path.join(root, 'Geschäftliches');
+  const expectedSlug = workspaceRoot.replace(/[^A-Za-z0-9]/g, '-');
+  const projectDir = path.join(claudeRoot, 'projects', expectedSlug);
+  const sessionPath = path.join(projectDir, 'session.jsonl');
+  const originalEnv = snapshotProcessEnv();
+
+  await mkdir(workspaceRoot, { recursive: true });
+  await mkdir(ideRoot, { recursive: true });
+  await mkdir(projectDir, { recursive: true });
+  await writeFile(
+    path.join(ideRoot, 'active.lock'),
+    JSON.stringify({ workspaceFolders: [workspaceRoot] })
+  );
+  await writeFile(
+    sessionPath,
+    `${JSON.stringify(makeAssistantLine('2026-08-12T16:00:00Z', 100))}\n`
+  );
+
+  applyClaudeHome(homeDir);
+  const dataSource = new JsonlTailDataSource(createMockVscode([workspaceRoot]));
+
+  try {
+    await delay(50);
+
+    const session = await (dataSource as unknown as {
+      findActiveSession: () => Promise<{
+        readonly projectDir: string;
+        readonly jsonlPath: string;
+      } | undefined>;
+    }).findActiveSession();
+
+    assert.equal(session?.projectDir, projectDir);
+    assert.equal(session?.jsonlPath, sessionPath);
+  } finally {
+    dataSource.dispose();
+    await dataSource.whenIdle();
+    restoreProcessEnv(originalEnv);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('findActiveSession prefers the newest lock file when jsonl mtimes disagree', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'claude-jsonl-tail-lock-mtime-'));
   const homeDir = path.join(root, 'home');

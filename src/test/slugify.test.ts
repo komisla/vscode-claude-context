@@ -10,8 +10,19 @@ test('slugify handles macOS paths', () => {
   assert.equal(slugify('/Users/Foo/my project'), '-Users-Foo-my-project');
 });
 
-test('slugify collapses internal whitespace runs', () => {
-  assert.equal(slugify('/Users/Foo Bar/project  one'), '-Users-Foo-Bar-project-one');
+test('slugify replaces non-ASCII characters in Windows paths', () => {
+  assert.equal(
+    slugify('c:\\Users\\Foo\\Geschäftliches'),
+    'c--Users-Foo-Gesch-ftliches'
+  );
+});
+
+test('slugify replaces non-ASCII characters in macOS paths', () => {
+  assert.equal(slugify('/Users/Foo/Müller Straße'), '-Users-Foo-M-ller-Stra-e');
+});
+
+test('slugify preserves replacement runs', () => {
+  assert.equal(slugify('/Users/Foo Bar/project  one'), '-Users-Foo-Bar-project--one');
 });
 
 test('slugify handles UNC paths', () => {
