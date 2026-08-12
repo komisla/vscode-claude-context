@@ -67,7 +67,14 @@ const warnedInvalidUsageSessionPaths = new Set<string>();
 // MODEL_TABLE only needs entries that differ from a family default; resolveFamilyFallback()
 // handles every unrecognized model ID. New or changed entries must be verified against the
 // current Claude Code changelog or an equivalent current source, never copied from another row.
-// Sonnet 4.6 remains 200K per anthropics/claude-code#11008; newer models default to 1M.
+//
+// contextWindow: Sonnet 4.6 remains 200K per anthropics/claude-code#11008. Opus 4.6+, Opus 5,
+// Sonnet 5, Fable 5 and Mythos 5 default to 1M *unless the user opts out* — for those users
+// the window below is too large, so the reported fill % reads lower than it really is.
+//
+// maxOutputTokens: Claude Code's default output budget, not the API ceiling. Opus 5 registers
+// a 64K default against a 128K API maximum; taking the API figure would overstate the reserve
+// subtracted in calculateFillPercent().
 export const MODEL_TABLE: Readonly<Record<string, ModelLimits>> = {
   'claude-fable-5': { contextWindow: 1_000_000, maxOutputTokens: 32_000 },
   'claude-mythos-5': { contextWindow: 1_000_000, maxOutputTokens: 32_000 },
