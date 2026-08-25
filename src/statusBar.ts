@@ -47,7 +47,7 @@ export class StatusBarController implements vscode.Disposable {
     const config = vscode.workspace.getConfiguration('claudeContext');
     const alignment = config.get<string>('statusBar.alignment', 'left');
     const rawPriority = config.get<number>('statusBar.priority', 100);
-    const priority = Number.isFinite(rawPriority) ? Math.min(Math.max(rawPriority, 0), 1000) : 100;
+    const priority = Number.isFinite(rawPriority) ? rawPriority : 100;
 
     if (alignment !== 'left' && alignment !== 'right') {
       globalThis.console.warn(

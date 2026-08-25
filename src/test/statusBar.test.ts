@@ -382,6 +382,39 @@ test('StatusBarController reads statusBar.alignment and statusBar.priority on cr
   tracker.source.dispose();
 });
 
+function readPriority(configuredPriority: unknown): number {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    'statusBar.priority': configuredPriority
+  });
+
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({ error: 'Claude Code session not found' });
+  const controller = new StatusBarController(tracker.source, rateLimit);
+  const { priority } = vscodeMock.window.statusBarItems[0];
+
+  controller.dispose();
+  tracker.source.dispose();
+
+  return priority;
+}
+
+test('StatusBarController passes a negative statusBar.priority through unchanged', () => {
+  assert.equal(readPriority(-10), -10);
+});
+
+test('StatusBarController passes a statusBar.priority above the old ceiling through unchanged', () => {
+  assert.equal(readPriority(5_000), 5_000);
+});
+
+test('StatusBarController falls back to 100 for a non-numeric statusBar.priority', () => {
+  assert.equal(readPriority('not-a-number'), 100);
+});
+
 test('StatusBarController recreates the status bar item when alignment changes', () => {
   const vscodeMock = vscode as unknown as VscodeMock;
   vscodeMock.resetMockState();
