@@ -44,11 +44,11 @@ The extension tails Claude Code's JSONL session files in `~/.claude/projects/`. 
 | `claudeContext.showHistoricalUsage` | boolean | `true` | Show plan utilization (5h / 7d) in the status bar and panel. Toggle also available via checkbox in the breakdown panel. |
 | `claudeContext.showTotalFill` | boolean | `false` | Show total window fill % in parentheses in the status bar, e.g. `ctx 47% (42%)`. Also shows a second bar in the panel. Toggle in the breakdown panel. |
 | `claudeContext.statusBar.alignment` | `"left"` \| `"right"` | `"left"` | Which side of the status bar to show the indicator on. |
-| `claudeContext.statusBar.priority` | number | `100` | Sort priority within that side. Higher values sit further to the left within the side. |
+| `claudeContext.statusBar.priority` | number | `100` | Sort priority within that side. Higher values sit further to the left within the side. Negative values are allowed. |
 
 ### Note on `statusBar.alignment` and `statusBar.priority`
 
-VS Code sorts items within each side by descending priority, placed right-to-left starting from the outer edge of that side. If you want the indicator next to another extension's status bar item, match its priority closely and nudge up or down by a few points, or check that extension's own priority setting if it exposes one. There's no way to pin an item to an exact pixel position, only its relative order.
+VS Code sorts items within each side by descending priority, placed right-to-left starting from the outer edge of that side. If you want the indicator next to another extension's status bar item, match its priority closely and nudge up or down by a few points, or check that extension's own priority setting if it exposes one. There's no way to pin an item to an exact pixel position, only its relative order. Any number is accepted, including negative values — a low or negative priority places the indicator at the inner edge of its side, to the right of everything else on the left side.
 
 ### Note on `showHistoricalUsage`
 

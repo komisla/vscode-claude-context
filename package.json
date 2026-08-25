@@ -67,9 +67,7 @@
         "claudeContext.statusBar.priority": {
           "type": "number",
           "default": 100,
-          "minimum": 0,
-          "maximum": 1000,
-          "description": "Sort priority of the Claude Context indicator within its side of the status bar. Higher values are placed further to the left within that side."
+          "description": "Sort priority of the Claude Context indicator within its side of the status bar. Higher values are placed further to the left within that side. Negative values are allowed, and place the indicator at the inner edge of its side."
         }
       }
     }
