@@ -13,9 +13,12 @@ interface VscodeMock {
   ) => void;
   readonly window: {
     readonly statusBarItems: Array<{
+      alignment: number;
+      priority: number;
       visible: boolean;
       hideCount: number;
       showCount: number;
+      disposeCount: number;
       text: string;
       backgroundColor: { readonly id: string } | undefined;
     }>;
@@ -333,5 +336,160 @@ test('StatusBarController whenIdle waits for rate-limit refresh after dispose', 
 
   assert.equal(refreshSettled, true);
 
+  tracker.source.dispose();
+});
+
+test('StatusBarController defaults to left alignment and priority 100', () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {});
+
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({ error: 'Claude Code session not found' });
+  const controller = new StatusBarController(tracker.source, rateLimit);
+  const item = vscodeMock.window.statusBarItems[0];
+
+  assert.equal(item.alignment, (vscode as unknown as { StatusBarAlignment: { Left: number } }).StatusBarAlignment.Left);
+  assert.equal(item.priority, 100);
+
+  controller.dispose();
+  tracker.source.dispose();
+});
+
+test('StatusBarController reads statusBar.alignment and statusBar.priority on creation', () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    'statusBar.alignment': 'right',
+    'statusBar.priority': 5
+  });
+
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({ error: 'Claude Code session not found' });
+  const controller = new StatusBarController(tracker.source, rateLimit);
+  const item = vscodeMock.window.statusBarItems[0];
+
+  assert.equal(item.alignment, (vscode as unknown as { StatusBarAlignment: { Right: number } }).StatusBarAlignment.Right);
+  assert.equal(item.priority, 5);
+
+  controller.dispose();
+  tracker.source.dispose();
+});
+
+test('StatusBarController recreates the status bar item when alignment changes', () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    'statusBar.alignment': 'left',
+    'statusBar.priority': 100
+  });
+
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({
+    fillPercent: 50,
+    totalTokens: 50_000,
+    contextWindow: 100_000,
+    effectiveWindow: 100_000
+  });
+
+  const controller = new StatusBarController(tracker.source, rateLimit);
+  const firstItem = vscodeMock.window.statusBarItems[0];
+
+  assert.equal(vscodeMock.window.statusBarItems.length, 1);
+  assert.equal(firstItem.visible, true);
+
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    'statusBar.alignment': 'right',
+    'statusBar.priority': 100
+  });
+  (vscode.workspace as unknown as { fireDidChangeConfiguration: (section: string) => void }).fireDidChangeConfiguration(
+    'claudeContext.statusBar.alignment'
+  );
+
+  assert.equal(firstItem.disposeCount, 1);
+  assert.equal(vscodeMock.window.statusBarItems.length, 2);
+
+  const secondItem = vscodeMock.window.statusBarItems[1];
+  assert.equal(secondItem.alignment, (vscode as unknown as { StatusBarAlignment: { Right: number } }).StatusBarAlignment.Right);
+  assert.equal(secondItem.priority, 100);
+  assert.equal(secondItem.visible, true);
+  assert.equal(secondItem.text, firstItem.text);
+
+  controller.dispose();
+  tracker.source.dispose();
+});
+
+test('StatusBarController recreates the status bar item when priority changes', () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    'statusBar.alignment': 'left',
+    'statusBar.priority': 100
+  });
+
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({ error: 'Claude Code session not found' });
+  const controller = new StatusBarController(tracker.source, rateLimit);
+  const firstItem = vscodeMock.window.statusBarItems[0];
+
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    'statusBar.alignment': 'left',
+    'statusBar.priority': 5
+  });
+  (vscode.workspace as unknown as { fireDidChangeConfiguration: (section: string) => void }).fireDidChangeConfiguration(
+    'claudeContext.statusBar.priority'
+  );
+
+  assert.equal(firstItem.disposeCount, 1);
+  const secondItem = vscodeMock.window.statusBarItems[1];
+  assert.equal(secondItem.priority, 5);
+  assert.equal(secondItem.alignment, firstItem.alignment);
+
+  controller.dispose();
+  tracker.source.dispose();
+});
+
+test('StatusBarController does not recreate the status bar item when an unrelated setting changes', () => {
+  const vscodeMock = vscode as unknown as VscodeMock;
+  vscodeMock.resetMockState();
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    'statusBar.alignment': 'left',
+    'statusBar.priority': 100,
+    showTotalFill: false
+  });
+
+  const rateLimit = {
+    refresh: async () => makeRateLimitSnapshot()
+  } as unknown as RateLimitReader;
+
+  const tracker = createSource({ error: 'Claude Code session not found' });
+  const controller = new StatusBarController(tracker.source, rateLimit);
+  const firstItem = vscodeMock.window.statusBarItems[0];
+
+  vscodeMock.setWorkspaceConfiguration('claudeContext', {
+    'statusBar.alignment': 'left',
+    'statusBar.priority': 100,
+    showTotalFill: true
+  });
+  (vscode.workspace as unknown as { fireDidChangeConfiguration: (section: string) => void }).fireDidChangeConfiguration(
+    'claudeContext.showTotalFill'
+  );
+
+  assert.equal(firstItem.disposeCount, 0);
+  assert.equal(vscodeMock.window.statusBarItems.length, 1);
+
+  controller.dispose();
   tracker.source.dispose();
 });

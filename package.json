@@ -57,6 +57,19 @@
           "type": "boolean",
           "default": false,
           "description": "Show the raw total window fill % in parentheses in the status bar, e.g. ctx 47% (42%). The first number is usable fill (effective window minus output/reserve), the second is fill of the raw 200k model context window."
+        },
+        "claudeContext.statusBar.alignment": {
+          "type": "string",
+          "enum": ["left", "right"],
+          "default": "left",
+          "description": "Which side of the status bar to show the Claude Context indicator on."
+        },
+        "claudeContext.statusBar.priority": {
+          "type": "number",
+          "default": 100,
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Sort priority of the Claude Context indicator within its side of the status bar. Higher values are placed further to the left within that side."
         }
       }
     }

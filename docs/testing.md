@@ -21,7 +21,7 @@ This compiles (`webpack`), type-checks (`tsc --outDir out/test-dist`), then runs
 | `contextReconstructor.test.ts` | CLAUDE.md import counting, JSONL reconstruction, cache invalidation |
 | `jsonlTail.test.ts` | Fill-percent calculation, model limits, JSONL parsing, FSWatcher, session detection |
 | `historicalUsage.test.ts` | Historical JSONL scanning, 5h/7d bucketing, directory cache, timestamp parsing |
-| `statusBar.test.ts` | Status bar thresholds, rate-limit timer start/stop |
+| `statusBar.test.ts` | Status bar thresholds, rate-limit timer start/stop, alignment/priority recreate-on-change |
 | `panel.test.ts` | BreakdownPanel snapshot posting, throttle, dispose |
 | `extension.test.ts` | Activation wiring, prewarm call |
 | `dashboardHtml.test.ts` | WebView HTML invariants (CSP, storage, loading state) |

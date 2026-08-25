@@ -5,7 +5,7 @@ import { RATE_LIMIT_REFRESH_MS, RateLimitReader, type RateLimitSnapshot } from '
 import { buildTooltipText } from './statusBarFormatting';
 
 export class StatusBarController implements vscode.Disposable {
-  private readonly item: vscode.StatusBarItem;
+  private item: vscode.StatusBarItem;
   private readonly subscriptions: vscode.Disposable[] = [];
   private readonly rateLimit: RateLimitReader;
   private disposed = false;
@@ -17,18 +17,20 @@ export class StatusBarController implements vscode.Disposable {
 
   public constructor(source: ContextDataSource, rateLimit: RateLimitReader) {
     this.rateLimit = rateLimit;
-    this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    this.item.command = 'claudeContext.openPanel';
-    this.item.name = 'Claude Context Monitor';
+    const placement = this.readPlacement();
+    this.item = this.createItem(placement.alignment, placement.priority);
 
     this.subscriptions.push(
-      this.item,
       source.onDidChange((update) => {
         this.latest = update;
         this.render();
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration('claudeContext')) {
+          if (event.affectsConfiguration('claudeContext.statusBar')) {
+            this.applyPlacementIfChanged();
+          }
+
           this.render();
 
           if (event.affectsConfiguration('claudeContext.showHistoricalUsage')) {
@@ -39,6 +41,47 @@ export class StatusBarController implements vscode.Disposable {
     );
 
     this.render();
+  }
+
+  private readPlacement(): { alignment: vscode.StatusBarAlignment; priority: number } {
+    const config = vscode.workspace.getConfiguration('claudeContext');
+    const alignment = config.get<string>('statusBar.alignment', 'left');
+    const rawPriority = config.get<number>('statusBar.priority', 100);
+    const priority = Number.isFinite(rawPriority) ? Math.min(Math.max(rawPriority, 0), 1000) : 100;
+
+    if (alignment !== 'left' && alignment !== 'right') {
+      globalThis.console.warn(
+        `[vscode-claude-context] invalid claudeContext.statusBar.alignment value "${alignment}", falling back to "left"`
+      );
+      return { alignment: vscode.StatusBarAlignment.Left, priority };
+    }
+
+    return {
+      alignment: alignment === 'right' ? vscode.StatusBarAlignment.Right : vscode.StatusBarAlignment.Left,
+      priority
+    };
+  }
+
+  private createItem(alignment: vscode.StatusBarAlignment, priority: number): vscode.StatusBarItem {
+    const item = vscode.window.createStatusBarItem(alignment, priority);
+    item.command = 'claudeContext.openPanel';
+    item.name = 'Claude Context Monitor';
+    return item;
+  }
+
+  private applyPlacementIfChanged(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    const placement = this.readPlacement();
+
+    if (placement.alignment === this.item.alignment && placement.priority === this.item.priority) {
+      return;
+    }
+
+    this.item.dispose();
+    this.item = this.createItem(placement.alignment, placement.priority);
   }
 
   public dispose(): void {
@@ -52,6 +95,8 @@ export class StatusBarController implements vscode.Disposable {
     for (const subscription of this.subscriptions) {
       subscription.dispose();
     }
+
+    this.item.dispose();
   }
 
   public async whenIdle(): Promise<void> {

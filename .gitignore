@@ -29,5 +29,8 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
+# Git Bash / MSYS crash dumps
+*.stackdump
+
 # Cache
 .eslintcache

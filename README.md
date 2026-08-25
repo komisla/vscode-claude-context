@@ -43,6 +43,12 @@ The extension tails Claude Code's JSONL session files in `~/.claude/projects/`. 
 | `claudeContext.hideBelow` | number | `0` | Hide the status bar item when fill % is below this value. `0` keeps it always visible. |
 | `claudeContext.showHistoricalUsage` | boolean | `true` | Show plan utilization (5h / 7d) in the status bar and panel. Toggle also available via checkbox in the breakdown panel. |
 | `claudeContext.showTotalFill` | boolean | `false` | Show total window fill % in parentheses in the status bar, e.g. `ctx 47% (42%)`. Also shows a second bar in the panel. Toggle in the breakdown panel. |
+| `claudeContext.statusBar.alignment` | `"left"` \| `"right"` | `"left"` | Which side of the status bar to show the indicator on. |
+| `claudeContext.statusBar.priority` | number | `100` | Sort priority within that side. Higher values sit further to the left within the side. |
+
+### Note on `statusBar.alignment` and `statusBar.priority`
+
+VS Code sorts items within each side by descending priority, placed right-to-left starting from the outer edge of that side. If you want the indicator next to another extension's status bar item, match its priority closely and nudge up or down by a few points, or check that extension's own priority setting if it exposes one. There's no way to pin an item to an exact pixel position, only its relative order.
 
 ### Note on `showHistoricalUsage`
 

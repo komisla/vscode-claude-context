@@ -59,3 +59,4 @@ src/
 | Polling | Max once per 5 s when active; idle detection via `whenIdle()` |
 | WebView storage | VS Code message passing only — no `localStorage`/`sessionStorage` |
 | Historical usage | Optional API probe (`showHistoricalUsage: false` by default) |
+| Status bar placement | `statusBar.alignment`/`statusBar.priority` settings; VS Code fixes alignment/priority at item creation, so changing either disposes and recreates the `StatusBarItem` |
